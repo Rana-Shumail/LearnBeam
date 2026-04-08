@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Blueprint 4.0 | Mathematical Portal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@900&family=Inter:wght@300;400;700&family=Libre+Baskerville:ital@1&family=Fira+Code:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #1e70f0;
+            --chalk-white: rgba(255, 255, 255, 0.38);
+            --text-main: #ffffff;
+            --glass-border: rgba(255, 255, 255, 0.22);
+            --glass-fill: rgba(255, 255, 255, 0.04);
+            --glass-highlight: rgba(255, 255, 255, 0.14);
+            --shadow-dark: rgba(0, 0, 0, 0.22);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background:
+                radial-gradient(circle at 20% 25%, rgba(255,255,255,0.08) 0%, transparent 24%),
+                radial-gradient(circle at 80% 18%, rgba(255,255,255,0.05) 0%, transparent 28%),
+                radial-gradient(circle at 50% 75%, rgba(255,255,255,0.04) 0%, transparent 32%),
+                linear-gradient(180deg, #2a7af7 0%, #1e70f0 52%, #1b66dc 100%);
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* subtle grain without overpowering */
+        body::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                url("https://www.transparenttextures.com/patterns/noise-pattern-with-subtle-cross-lines.png");
+            opacity: 0.16;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(to bottom, rgba(255,255,255,0.06), transparent 20%),
+                radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.08) 100%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .teach-branding {
+            position: absolute;
+            font-family: 'Crimson Pro', serif;
+            font-size: 30vw;
+            font-weight: 900;
+            color: #0c2b5c;
+            z-index: 1;
+            user-select: none;
+            letter-spacing: -2vw;
+            line-height: 1;
+            background: linear-gradient(45deg, #0b2a59 25%, #164897 70%, #0e3877 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            opacity: 0.95;
+            filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.14));
+        }
+
+        #chalk-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+
+        .access-card {
+            position: relative;
+            z-index: 10;
+            width: 380px;
+            padding: 52px 38px 34px;
+            border-radius: 28px;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.035) 100%);
+            backdrop-filter: blur(28px) saturate(145%) brightness(1.08);
+            -webkit-backdrop-filter: blur(28px) saturate(145%) brightness(1.08);
+            border: 1px solid var(--glass-border);
+            box-shadow:
+                0 20px 45px var(--shadow-dark),
+                inset 0 1px 0 rgba(255,255,255,0.28),
+                inset 0 -1px 0 rgba(255,255,255,0.06);
+            overflow: hidden;
+        }
+
+        /* top highlight for more realistic glass */
+        .access-card::before {
+            content: "";
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            top: 10px;
+            height: 38%;
+            border-radius: 22px;
+            background: linear-gradient(
+                180deg,
+                rgba(255,255,255,0.20) 0%,
+                rgba(255,255,255,0.06) 40%,
+                rgba(255,255,255,0.00) 100%
+            );
+            pointer-events: none;
+        }
+
+        /* side reflection */
+        .access-card::after {
+            content: "";
+            position: absolute;
+            top: -30%;
+            left: -18%;
+            width: 46%;
+            height: 180%;
+            transform: rotate(18deg);
+            background: linear-gradient(
+                90deg,
+                rgba(255,255,255,0.00),
+                rgba(255,255,255,0.10),
+                rgba(255,255,255,0.00)
+            );
+            pointer-events: none;
+        }
+
+        h2 {
+            color: white;
+            font-weight: 500;
+            margin: 0 0 30px;
+            letter-spacing: 3px;
+            font-size: 1.05rem;
+            text-transform: uppercase;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.12);
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+            text-align: left;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(255, 255, 255, 0.10);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 12px;
+            font-size: 0.98rem;
+            color: white;
+            outline: none;
+            transition: all 0.28s ease;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.12),
+                inset 0 -1px 0 rgba(255,255,255,0.03);
+        }
+
+        input::placeholder {
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        input:focus {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: rgba(255,255,255,0.48);
+            box-shadow:
+                0 0 0 3px rgba(255,255,255,0.08),
+                inset 0 1px 0 rgba(255,255,255,0.16);
+        }
+
+        .btn-enter {
+            width: 100%;
+            padding: 14px;
+            margin-top: 4px;
+            background: rgba(255,255,255,0.94);
+            color: #0a3d91;
+            border: none;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            box-shadow: 0 12px 20px rgba(0, 0, 0, 0.14);
+            transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .btn-enter:hover {
+            background: #ffffff;
+            transform: translateY(-1px) scale(1.015);
+            box-shadow: 0 14px 24px rgba(0, 0, 0, 0.18);
+        }
+
+        .signup-request {
+            display: block;
+            margin-top: 22px;
+            color: rgba(255,255,255,0.74);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 300;
+            transition: color 0.2s ease;
+        }
+
+        .signup-request:hover {
+            color: rgba(255,255,255,0.95);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="teach-branding">Teach</div>
+    <canvas id="chalk-canvas"></canvas>
+
+    <div class="access-card">
+        <h2>Initialize System</h2>
+
+        <div class="input-group">
+            <input type="text" placeholder="Access ID">
+        </div>
+        <div class="input-group">
+            <input type="password" placeholder="Passcode">
+        </div>
+
+        <button class="btn-enter">Verify & Connect</button>
+        <a href="#" class="signup-request">Enrollment Protocol</a>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('chalk-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let elements = [];
+
+        const scienceDataset = [
+            { type: "text", content: "a² + b² = c²", font: "italic 16px 'Libre Baskerville'", rough: 0.28 },
+            { type: "text", content: "tan α = a/b", font: "italic 15px 'Libre Baskerville'", rough: 0.28 },
+            { type: "text", content: "S = 2(ab+bc+ca)", font: "italic 14px 'Libre Baskerville'", rough: 0.22 },
+            { type: "text", content: "Δx Δp ≥ ℏ/2", font: "13px 'Fira Code'", rough: 0.30 },
+            { type: "text", content: "e^(iπ) + 1 = 0", font: "15px 'Fira Code'", rough: 0.34 },
+            { type: "text", content: "∇ × E = -∂B/∂t", font: "16px 'Fira Code'", rough: 0.42 },
+            { type: "text", content: "H = Σpᵢq̇ᵢ - L", font: "15px 'Fira Code'", rough: 0.32 },
+            { type: "text", content: "R_uv - 1/2 Rg_uv = 8πG/c⁴ T_uv", font: "12px 'Fira Code'", rough: 0.42 },
+            { type: "cone", radius: 40, height: 90, segments: 8 },
+            { type: "icosahedron", size: 60, detail: 0 },
+            { type: "mobius", radius: 50, loops: 1 }
+        ];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        class ChalkSketch {
+            constructor() {
+                this.reset(true);
+            }
+
+            reset(initial = false) {
+                this.x = Math.random() * canvas.width;
+                this.y = initial ? Math.random() * canvas.height : canvas.height + Math.random() * 120;
+                this.data = scienceDataset[Math.floor(Math.random() * scienceDataset.length)];
+                this.opacity = Math.random() * 0.24 + 0.08;
+                this.speed = 0.02 + Math.random() * 0.07; // slower than before
+                this.drift = (Math.random() - 0.5) * 0.28; // slower horizontal drift
+                this.scale = 0.85 + Math.random() * 0.6;
+                this.rotation = (Math.random() - 0.5) * 0.35;
+            }
+
+            roughLine(x1, y1, x2, y2) {
+                const jiggle = 0.7;
+                ctx.beginPath();
+                ctx.moveTo(
+                    x1 + (Math.random() - 0.5) * jiggle,
+                    y1 + (Math.random() - 0.5) * jiggle
+                );
+                ctx.lineTo(
+                    x2 + (Math.random() - 0.5) * jiggle,
+                    y2 + (Math.random() - 0.5) * jiggle
+                );
+                ctx.stroke();
+
+                // second faint stroke for a chalk build-up look
+                ctx.beginPath();
+                ctx.moveTo(
+                    x1 + (Math.random() - 0.5) * jiggle * 1.6,
+                    y1 + (Math.random() - 0.5) * jiggle * 1.6
+                );
+                ctx.lineTo(
+                    x2 + (Math.random() - 0.5) * jiggle * 1.6,
+                    y2 + (Math.random() - 0.5) * jiggle * 1.6
+                );
+                ctx.globalAlpha *= 0.35;
+                ctx.stroke();
+                ctx.globalAlpha /= 0.35;
+            }
+
+            drawCone() {
+                const r = this.data.radius;
+                const h = this.data.height;
+                const s = this.data.segments;
+
+                for (let i = 0; i < s; i++) {
+                    const a = (i / s) * Math.PI * 2;
+                    const x = Math.cos(a) * r;
+                    const y = Math.sin(a) * (r * 0.2);
+                    this.roughLine(x, y, 0, -h);
+
+                    if (i > 0) {
+                        const pa = ((i - 1) / s) * Math.PI * 2;
+                        this.roughLine(
+                            x, y,
+                            Math.cos(pa) * r,
+                            Math.sin(pa) * (r * 0.2)
+                        );
+                    }
+                }
+            }
+
+            drawIcosahedron() {
+                const sz = this.data.size;
+                const phi = (1 + Math.sqrt(5)) / 2 * sz;
+
+                ctx.lineWidth = 1.05;
+                this.roughLine(0, sz, phi, 0);
+                this.roughLine(0, sz, 0, -sz);
+                this.roughLine(phi, 0, 0, -sz);
+                this.roughLine(-sz, 0, 0, phi);
+                this.roughLine(sz, 0, 0, phi);
+                this.roughLine(-sz * 0.7, -sz * 0.35, sz * 0.7, -sz * 0.35);
+            }
+
+            drawMobius() {
+                const r = this.data.radius;
+                const thick = 10;
+                const res = 24;
+
+                for (let i = 0; i < res; i++) {
+                    const a1 = (i / res) * Math.PI * 2;
+                    const a2 = ((i + 1) / res) * Math.PI * 2;
+                    const t1 = (i / res) * Math.PI * 2;
+                    const t2 = ((i + 1) / res) * Math.PI * 2;
+
+                    const p1x = (r + thick * Math.cos(t1 / 2)) * Math.cos(a1);
+                    const p1y = (r + thick * Math.cos(t1 / 2)) * Math.sin(a1);
+                    const p2x = (r + thick * Math.cos(t2 / 2)) * Math.cos(a2);
+                    const p2y = (r + thick * Math.cos(t2 / 2)) * Math.sin(a2);
+
+                    this.roughLine(p1x, p1y, p2x, p2y);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                ctx.scale(this.scale, this.scale);
+
+                const baseAlpha = this.opacity;
+                ctx.fillStyle = `rgba(255,255,255,${baseAlpha})`;
+                ctx.strokeStyle = `rgba(255,255,255,${baseAlpha * 0.9})`;
+                ctx.lineWidth = 1;
+
+                if (this.data.type === "text") {
+                    ctx.font = this.data.font;
+                    ctx.fillText(this.data.content, 0, 0);
+
+                    // chalk dust / rough overlay
+                    ctx.fillStyle = `rgba(255,255,255,${baseAlpha * this.data.rough})`;
+                    ctx.fillText(this.data.content, 0.8, 0.7);
+                    ctx.fillText(this.data.content, -0.6, 0.4);
+                } else if (this.data.type === "cone") {
+                    this.drawCone();
+                } else if (this.data.type === "icosahedron") {
+                    this.drawIcosahedron();
+                } else if (this.data.type === "mobius") {
+                    this.drawMobius();
+                }
+
+                ctx.restore();
+            }
+
+            update() {
+                this.y -= this.speed;
+                this.x += this.drift;
+
+                if (this.y < -140 || this.x < -220 || this.x > canvas.width + 220) {
+                    this.reset();
+                }
+            }
+        }
+
+        function initElements() {
+            elements = [];
+            for (let i = 0; i < 40; i++) {
+                elements.push(new ChalkSketch());
+            }
+        }
+
+        function drawAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            elements.forEach(el => {
+                el.update();
+                el.draw();
+            });
+
+            requestAnimationFrame(drawAll);
+        }
+
+        initElements();
+        drawAll();
+    </script>
+</body>
+</html>
