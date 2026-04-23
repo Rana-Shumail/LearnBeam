@@ -1,19 +1,19 @@
-Stage 1 of 5
+Stage 2 of 5
 
 Member role:
-- Setup and deployment foundation
+- Backend and AI service foundation
 
 Main additions in this snapshot:
-- `.gitignore`
-- `.env.example`
-- `vercel.json`
-- updated `package.json` / `package-lock.json`
-- Vite config updates for project setup
+- Supabase config and Edge Function scaffolding
+- `spark-ai` serverless backend
+- Spark client helper
+- expanded DB helper layer
+- schema file for hosted project setup
 
 Recommended branch flow:
-1. Start from the original GitHub state.
+1. Branch from main after Stage 1 is merged.
 2. Replace project files with this snapshot.
-3. Commit and push as the first merge in order.
+3. Commit and push as the second merge in order.
 
 Merge order:
 1. member1-setup

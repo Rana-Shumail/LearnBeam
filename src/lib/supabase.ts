@@ -76,6 +76,29 @@ function appendCacheBust(url: string) {
   return `${url}${separator}v=${Date.now()}`;
 }
 
+export async function fetchRemoteAvatarPreference(userId: string): Promise<string | null> {
+  if (!SUPABASE_CONFIGURED) return null;
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("avatar_url")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return null;
+  return typeof data?.avatar_url === "string" && data.avatar_url.trim() ? data.avatar_url.trim() : null;
+}
+
+export async function saveRemoteAvatarPreference(userId: string, url: string | null): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const { error } = await supabase
+    .from("user_profiles")
+    .upsert({
+      user_id: userId,
+      avatar_url: url,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
 /* ── Upload avatar to Supabase Storage ───────────── */
 export async function uploadAvatar(file: File): Promise<string | null> {
   if (!SUPABASE_CONFIGURED) return null;
@@ -117,6 +140,7 @@ export async function getUser() {
 ──────────────────────────────────────────────────── */
 let _avatarUrl: string | null = null;
 const _avatarListeners = new Set<(url: string | null) => void>();
+let _avatarRestoreInitialized = false;
 
 export function getAvatarCache(): string | null { return _avatarUrl; }
 
@@ -156,36 +180,57 @@ export function resolvePreferredAvatarUrl(userId: string, fallbackUrl?: string |
   return loadCustomAvatarUrl(userId) ?? fallbackUrl ?? null;
 }
 
+function extractMetadataAvatarUrl(metadata: Record<string, unknown> | undefined): string | null {
+  const avatar = typeof metadata?.avatar_url === "string" ? metadata.avatar_url : null;
+  const picture = typeof metadata?.picture === "string" ? metadata.picture : null;
+  return avatar ?? picture ?? null;
+}
+
+async function restoreAvatarForUser(user: { id: string; user_metadata?: Record<string, unknown> }): Promise<void> {
+  const fallback = extractMetadataAvatarUrl(user.user_metadata);
+  const stored = loadCustomAvatarUrl(user.id);
+  const preferredLocal = resolvePreferredAvatarUrl(user.id, fallback);
+  if (preferredLocal) {
+    setAvatarCache(preferredLocal);
+  }
+
+  const remote = await fetchRemoteAvatarPreference(user.id).catch(() => null);
+  const preferred = remote ?? preferredLocal;
+  setAvatarCache(preferred);
+
+  if (preferred && stored !== preferred) {
+    saveCustomAvatarUrl(user.id, preferred);
+  }
+  if (!remote && preferred) {
+    void saveRemoteAvatarPreference(user.id, preferred).catch(() => {});
+  }
+}
+
 /**
  * Call once at app start. Listens for auth state changes (e.g. Google
  * OAuth re-login) and automatically restores the custom avatar to
  * Supabase user_metadata if it was overwritten.
  */
 export function initAvatarRestoreOnLogin(): void {
-  if (!SUPABASE_CONFIGURED) return;
+  if (!SUPABASE_CONFIGURED || _avatarRestoreInitialized) return;
+  _avatarRestoreInitialized = true;
 
   void supabase.auth.getSession().then(({ data }) => {
     const user = data.session?.user;
     if (!user) return;
-    const preferred = resolvePreferredAvatarUrl(user.id, user.user_metadata?.avatar_url ?? null);
-    setAvatarCache(preferred);
+    window.setTimeout(() => {
+      void restoreAvatarForUser(user);
+    }, 0);
   });
 
-  supabase.auth.onAuthStateChange(async (_event, session) => {
-    if (!session?.user) return;
-    const userId = session.user.id;
-    const stored = loadCustomAvatarUrl(userId);
-    const preferred = resolvePreferredAvatarUrl(userId, session.user.user_metadata?.avatar_url ?? null);
-    if (!preferred) return;
-    setAvatarCache(preferred);
-
-    // Restore custom avatar to Supabase metadata when Google OAuth overwrites it.
-    // Guard against infinite loop: only call updateUser when metadata differs from
-    // what we want — the next USER_UPDATED event will have matching metadata, so
-    // the guard will be false and updateUser won't be called again.
-    if (stored && (session.user.user_metadata?.avatar_url ?? null) !== stored) {
-      void supabase.auth.updateUser({ data: { avatar_url: stored } }).catch(() => {});
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (!session?.user) {
+      setAvatarCache(null);
+      return;
     }
+    window.setTimeout(() => {
+      void restoreAvatarForUser(session.user);
+    }, 0);
   });
 }
 

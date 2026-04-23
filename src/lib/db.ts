@@ -332,6 +332,29 @@ export async function fetchFactCheckReport(documentId: string): Promise<DbFactCh
   };
 }
 
+export async function fetchFactCheckReports(documentIds: string[]): Promise<Array<{
+  documentId: string;
+  report: DbFactCheckReportData;
+}>> {
+  if (documentIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("fact_check_reports")
+    .select("document_id, doc_name, summary, claims")
+    .in("document_id", documentIds);
+  if (error || !data) return [];
+  return data.flatMap((row) => {
+    if (typeof row.document_id !== "string") return [];
+    return [{
+      documentId: row.document_id,
+      report: {
+        docName: typeof row.doc_name === "string" ? row.doc_name : "",
+        summary: typeof row.summary === "string" ? row.summary : "",
+        claims: Array.isArray(row.claims) ? row.claims as DbFactCheckClaim[] : [],
+      },
+    }];
+  });
+}
+
 export async function upsertFactCheckReport(
   documentId: string,
   report: DbFactCheckReportData,
