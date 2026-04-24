@@ -17,8 +17,8 @@ Recommended branch flow:
 3. Commit and push as the third merge in order.
 
 Merge order:
-1. member1-setup
-2. member2-backend
-3. member3-features
+1. Pujan Ghimire-setup
+2. Nischal Karki-backend
+3. Abhishek Acharya-features
 4. member4-persistence
-5. final full projectcaption1 push
+5. Karan Kumar Sah- final full projectcaption1 push
