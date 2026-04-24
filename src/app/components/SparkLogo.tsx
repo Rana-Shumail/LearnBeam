@@ -6,11 +6,12 @@ interface SparkLogoProps {
 export function SparkLogo({ size = 24, className = "" }: SparkLogoProps) {
   return (
     <svg
-      viewBox="0 0 640 360"
+      viewBox="200 58 240 272"
       xmlns="http://www.w3.org/2000/svg"
       width={size}
-      height={size * (360 / 640)}
+      height={size}
       className={className}
+      style={{ display: "block", overflow: "visible" }}
     >
       {/* Small top vertical line */}
       <line
