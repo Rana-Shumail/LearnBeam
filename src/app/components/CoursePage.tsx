@@ -271,6 +271,28 @@ export function CoursePage() {
     /\b(syllabus|course|class)\b/.test(value.toLowerCase()) && /\b(about|overview|summary|cover|focus|focused|topic|topics)\b/.test(value.toLowerCase())
   ) || /\bwhat is (this )?(course|class|syllabus) about\b/i.test(value);
 
+  const buildCourseCourtesyReply = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+
+    if (/^(hi|hello|hey|heyy|yo|hiya|good morning|good afternoon|good evening)([!. ]*)?$/.test(trimmed)) {
+      return "Hi! I'm Spark. Ask me anything from your uploaded course sources, or switch to Spark Open for broader help.";
+    }
+
+    if (/^(thanks|thank you|thx|tysm|ty)([!. ]*)?$/.test(trimmed)) {
+      return "Anytime. I’m here whenever you want help from your course sources.";
+    }
+
+    if (/^(ok|okay|cool|nice|got it|sounds good|alright|great)([!. ]*)?$/.test(trimmed)) {
+      return "Sounds good. Ask another course question whenever you're ready.";
+    }
+
+    if (/^(bye|goodbye|see you|cya|talk later)([!. ]*)?$/.test(trimmed)) {
+      return "See you later. I’ll be here when you need help with your course documents.";
+    }
+
+    return null;
+  };
+
   const buildLocalCourseOverviewAnswer = () => {
     const summary = syllabusInsights?.summary?.trim();
     const grading = syllabusInsights?.gradingPolicy?.slice(0, 4).map((item) => (
@@ -375,6 +397,16 @@ export function CoursePage() {
       setMessages(createDefaultSparkMessages());
       return;
     }
+    const courtesyReply = sparkMode === "course" ? buildCourseCourtesyReply(msg) : null;
+    if (courtesyReply) {
+      setAiInput("");
+      setMessages(prev => [
+        ...prev,
+        createChatMessage({ role: "user", text: msg, mode: sparkMode }),
+        createChatMessage({ role: "ai", text: courtesyReply, mode: sparkMode }),
+      ]);
+      return;
+    }
     const activeDocs = docs.filter(d => d.used);
     const courseEvidence = buildCourseEvidence(msg, activeDocs);
     const history = messages
@@ -406,27 +438,41 @@ export function CoursePage() {
           "You are Spark, the AI study companion inside LearnBeam.",
           "You are operating in General Answer mode.",
           "Answer using your broader general knowledge and reasoning rather than the user's uploaded course documents.",
+          "Be clear, modern, and genuinely helpful to a student.",
+          "For simple questions, answer simply.",
+          "For study questions, explain step by step when it helps.",
+          "Prioritize practical explanations over textbook-style writing.",
+          "Do not sound overly corporate, robotic, or dramatic.",
           "Citations are optional. Provide them only when they are genuinely helpful, explicitly requested, or especially important for the claim.",
-          "Be clear, practical, and natural, like a normal high-quality AI assistant.",
-          "If you are unsure, say so instead of pretending to know.",
+          "If the user asks about a concept, prefer this shape when useful: short definition, key idea in plain language, then one short next-step suggestion for studying.",
+          "If you are unsure, say so plainly instead of pretending to know.",
           `Course context (for reference): ${courseCode}${courseName ? ` — ${courseName}` : ""}`,
         ].join("\n")
       : [
           "You are Spark, the AI study companion inside LearnBeam.",
           "You are in Course Sources mode.",
+          "If the user is only greeting you, thanking you, or making a short conversational remark, respond naturally in one brief sentence and invite them to ask about their course documents.",
           "",
-          "YOUR ONLY JOB: Present what is written in the course-source excerpts below.",
-          "Fix grammar. Organise the text clearly. Add absolutely nothing of your own.",
+          "YOUR ONLY JOB: present what is written in the course-source excerpts below in a clear, student-friendly way.",
+          "You may fix grammar, improve flow, and organize the answer so it reads naturally. Do not add facts of your own.",
           "",
           "STRICT RULES:",
           "- Every sentence in your answer must come directly from the course-source excerpts below.",
           "- Keep exact terminology, definitions, formulas, and technical names exactly as they appear — do NOT substitute synonyms or rephrase technical language.",
+          "- Start with the direct answer in plain language.",
+          "- If the excerpts support it, you may add one short clarifying sentence that only restates what is already present more clearly.",
           "- You may fix grammar and format the retrieved text into clean, readable prose — nothing more.",
           "- Do NOT add context, background knowledge, examples, analogies, or any elaboration from outside the excerpts.",
           "- Do NOT reference document names, slide numbers, or section headings in your answer.",
+          "- If the excerpts conflict, say that the uploaded sources conflict instead of choosing one silently.",
           "- If the excerpts do not contain an answer, reply with exactly: 'I couldn't find that in your uploaded course sources.'",
           "",
-          "CITATION:",
+          "STYLE:",
+          "- Sound like a smart study assistant, not a search engine or policy bot.",
+          "- Be concise, calm, and helpful.",
+          "- Most of the answer should stay very close to the original document wording.",
+          "",
+          "SOURCE LINE:",
           "- End every answer with exactly one line: Source: <filename(s)>",
           "",
           "Course-source excerpts (these are the ONLY facts you may use):",

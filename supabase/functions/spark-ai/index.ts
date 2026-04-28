@@ -491,17 +491,48 @@ async function callCerebras(messages: SparkAIMessage[]) {
   }
 }
 
+function isGroqCompoundModel(model: string) {
+  return model.startsWith("groq/compound");
+}
+
+function isGroqBrowserSearchModel(model: string) {
+  return model.startsWith("openai/gpt-oss-");
+}
+
+function isGroqSearchCapableModel(model: string) {
+  return isGroqCompoundModel(model) || isGroqBrowserSearchModel(model);
+}
+
 function buildOpenAICompatiblePayload(
   model: string,
   messages: SparkAIMessage[],
-  options?: { allowImages?: boolean },
+  options?: { allowImages?: boolean; groundedSearch?: boolean },
 ) {
+  if (options?.groundedSearch && !isGroqSearchCapableModel(model)) {
+    throw new Error(`Groq model ${model} does not support grounded web search.`);
+  }
+
   return {
     model,
     messages: buildOpenAICompatibleMessages(messages, options?.allowImages === true),
     temperature: 0.2,
     max_tokens: 4096,
     ...(likelyRequestsJson(messages) ? { response_format: { type: "json_object" } } : {}),
+    ...(options?.groundedSearch && isGroqCompoundModel(model)
+      ? {
+          compound_custom: {
+            tools: {
+              enabled_tools: ["web_search"],
+            },
+          },
+        }
+      : {}),
+    ...(options?.groundedSearch && isGroqBrowserSearchModel(model)
+      ? {
+          tool_choice: "required",
+          tools: [{ type: "browser_search" }],
+        }
+      : {}),
   };
 }
 
@@ -521,7 +552,10 @@ async function callGroqOnce(
       Authorization: `Bearer ${GROQ_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(buildOpenAICompatiblePayload(model, messages, options)),
+    body: JSON.stringify(buildOpenAICompatiblePayload(model, messages, {
+      allowImages: options?.allowImages,
+      groundedSearch: options?.grounded,
+    })),
   });
 
   const payload = await response.json().catch(() => null) as OpenAICompatibleResponse | null;
@@ -572,6 +606,13 @@ async function callGroq(
       throw new Error(
         `Groq Vision model (${primaryModel}) is unavailable and the text-only fallback cannot process images. ` +
         `Escalating to the next vision-capable provider.`,
+      );
+    }
+
+    if (mode === "search" && !isGroqSearchCapableModel(GROQ_FALLBACK_MODEL)) {
+      throw new Error(
+        `Groq search model (${primaryModel}) is unavailable and fallback model (${GROQ_FALLBACK_MODEL}) ` +
+        `cannot perform grounded web search. Escalating to the next grounded provider.`,
       );
     }
 
