@@ -6,6 +6,8 @@ dist/
 build/
 .vite/
 coverage/
+more stuff/
+supabase/.temp/
 
 # logs
 npm-debug.log*

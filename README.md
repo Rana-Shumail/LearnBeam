@@ -1,166 +1,74 @@
-# 📘 LearnBeam – AI Learning Assistant
+# LearnBeam
 
-## 🚀 Overview
-LearnBeam is a web-based AI learning assistant designed to help students study more effectively using their own course materials. Instead of relying on generic AI responses, the system uses uploaded documents (PDFs, notes, text) to provide context-based explanations, summaries, and practice questions.
+LearnBeam is an AI-powered academic workspace for students. It combines course management, document upload, syllabus analysis, reminders, grades, quizzes, and Spark AI into one web app.
 
-This project is being developed as part of the **CSCE 4901 Capstone Project** at the **University of North Texas (UNT)**.
+## Core stack
 
----
-
-## ✨ Features
-- 🔐 User Authentication (Login / Signup UI)
-- 📄 Upload study materials (PDF / Text)
-- 🤖 AI Chat Interface for academic support
-- 🧠 Practice Question Generator
-- 📝 Document-based learning (RAG concept)
-- 🎨 Modern UI with glassmorphism design
-- 📱 Responsive web interface (desktop + mobile ready)
-
----
-
-## 🛠️ Tech Stack
-
-### Frontend
-- React (Vite)
+- React 19
 - TypeScript
-- HTML5
-- CSS3
+- Vite
+- React Router
+- Tailwind CSS + custom theme styles
+- Supabase Auth
+- Supabase Postgres
+- Supabase Storage
+- Supabase Edge Functions
+- Gemini, Cerebras, and Groq for Spark AI
 
-### Backend (Planned / In Progress)
-- Node.js
-- Express.js
+## Main app structure
 
-### Database (Planned)
-- PostgreSQL or MySQL
+- `src/`: frontend UI, routes, course tabs, Spark chat, and app logic
+- `src/lib/`: database helpers, AI routing calls, syllabus import, fact-checking, document extraction
+- `supabase/`: Edge Function, config, and database migrations
+- `SUPABASE_SCHEMA.sql`: main database setup SQL
+- `vercel.json`: frontend deployment configuration
 
-### AI Integration (Planned)
-- OpenAI / Gemini / Groq API
-- Retrieval-Augmented Generation (RAG)
+## What stays in GitHub
 
----
+This repo is now cleaned to focus on the real deployable project:
 
-## 📁 Project Structure
+- app source code
+- Supabase backend files
+- schema + migration files
+- package configuration
+- deployment configuration
 
-```bash
-projectcaption1/
-│
-├── index.html
-├── package.json
-├── vite.config.ts
-├── postcss.config.mjs
-├── tsconfig.json
-├── tsconfig.app.json
-├── tsconfig.node.json
-│
-├── public/              # Static assets
-├── src/                 # React source code
-├── guidelines/          # Project guidelines and documents
-└── README.md
-````
+## Local-only archive
 
----
+Extra presentation/reference files were moved into:
 
-## ⚙️ Installation & Setup
+- `more stuff/`
 
-### 1. Clone the repository
+That folder is ignored by Git so it stays on your machine and does not get included in the final GitHub push.
 
-```bash
-git clone <your-repository-link>
-```
+Examples of archived items:
 
-### 2. Navigate to project folder
+- presentation deck files
+- architecture HTML/PDF files
+- wireframe and diagram files
+- temporary slide/export folders
+- local build output
 
-```bash
-cd projectcaption1
-```
-
-### 3. Install dependencies
+## Run locally
 
 ```bash
 npm install
-```
-
-### 4. Run development server
-
-```bash
 npm run dev
 ```
 
-### 5. Open in browser
+## Build
 
-Vite will provide a local URL:
-
-```
-http://localhost:5173
+```bash
+npm run build
 ```
 
----
+## Deployment
 
-## 🧩 How LearnBeam Works
+- Frontend: Vercel
+- Backend AI + database: Supabase
 
-1. User opens the web application
-2. User logs in or signs up
-3. User uploads study materials (PDF or text)
-4. System processes and stores the content
-5. User interacts with AI through chat
-6. AI provides answers based on uploaded documents
-7. User can generate quizzes for practice
+## Notes
 
----
-
-## 📊 Current Status
-
-* Frontend structure initialized
-* UI design in progress
-* Authentication UI in progress
-* Backend development started
-* Database design planned
-* AI integration planned
-
----
-
-## 🔮 Future Improvements
-
-* Canvas / D2L integration
-* Dark mode
-* Eye-safe mode
-* Practice quiz tracking
-* Teacher dashboard
-* GPA prediction system
-* Mobile app (iOS / Android)
-* Flashcard generator
-* Video/PDF summarizer
-
----
-
-## 👥 Team
-
-**Team HoloHive**
-
-* Rana Ahmad Shumail – Project Manager / Backend
-* Karan Kumar Sah – Frontend & Database
-* Nischal Karki – UI & Documentation
-* Abhishek Acharya – Development Support
-* Pujan Ghimire – Testing & Support
-
----
-
-## 🎯 Purpose
-
-The goal of LearnBeam is to provide students with a smarter study tool that connects AI responses directly to their own learning materials. This helps improve understanding, reduce confusion, and support independent learning.
-
----
-
-## 📌 Notes
-
-* This project is under active development
-* Some features are planned for future sprints
-* Current focus is on building core functionality and UI
-
----
-
-## 📄 License
-
-This project is developed for academic and educational purposes only.
-
-
+- `node_modules/`, `dist/`, `.vercel/`, and `more stuff/` should not be pushed.
+- Use the Supabase migration files and `SUPABASE_SCHEMA.sql` to set up the database.
+- Spark routes work across Gemini, Cerebras, and Groq depending on task type.
