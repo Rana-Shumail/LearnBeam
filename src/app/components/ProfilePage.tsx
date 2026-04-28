@@ -1,13 +1,20 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import {
   ChevronLeft, User, Camera, Check, X, Trash2, Edit2,
   GraduationCap, CreditCard, Bell, Shield, LogOut,
-  Settings, ChevronRight,
+  Settings, ChevronRight, KeyRound, CheckCircle2,
 } from "lucide-react";
 import learnBeamLogo from "../../assets/861bd4bcf410ca26cefb8d6a2c416c8933fab508.png";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { useIsMobile } from "./ui/use-mobile";
 import { loadCourses, saveCourses, type Course } from "./Dashboard";
+import {
+  getUser, updateProfile, uploadAvatar, updatePassword, signOut, SUPABASE_CONFIGURED,
+  setAvatarCache, saveCustomAvatarUrl, resolvePreferredAvatarUrl, saveRemoteAvatarPreference, fetchRemoteAvatarPreference,
+} from "../../lib/supabase";
+import { fetchCourses, deleteCourse as dbDeleteCourse } from "../../lib/db";
+import { deleteStoredCourseData, saveDashboardSuggestionState } from "../../lib/courseData";
 
 const F = {
   heading: "'Nunito', 'Trebuchet MS', system-ui, sans-serif",
@@ -115,13 +122,14 @@ function ConfirmDelete({ label, onConfirm, onCancel }: { label: string; onConfir
    MAIN PROFILE PAGE
 ───────────────────────────────────────────────────── */
 export function ProfilePage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
 
-  // Profile state
-  const [displayName, setDisplayName] = useState("Karan Kumar Sah");
-  const [email, setEmail]             = useState("flokithegodz@gmail.com");
-  const [username, setUsername]       = useState("karan_k");
+  // Profile state — seeded from Supabase user on mount
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail]             = useState("");
   const [avatar, setAvatar]           = useState<string | null>(null);
+  const [saveStatus, setSaveStatus]   = useState<"idle"|"saving"|"saved"|"error">("idle");
 
   // Courses
   const [courses, setCourses]         = useState<Course[]>(loadCourses);
@@ -130,21 +138,160 @@ export function ProfilePage() {
   // Section nav
   const [section, setSection]         = useState<Section>("profile");
 
-  const fileRef = useRef<HTMLInputElement>(null);
+  // Change-password modal state
+  const [changePwOpen, setChangePwOpen]   = useState(false);
+  const [pwFields, setPwFields]           = useState({ current:"", next:"", confirm:"" });
+  const [pwError, setPwError]             = useState<string|null>(null);
+  const [pwSuccess, setPwSuccess]         = useState(false);
+  const [pwLoading, setPwLoading]         = useState(false);
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const avatarSaveTimeoutRef = useRef<number | null>(null);
+
+  const withTimeout = async <T,>(promise: Promise<T>, label: string, ms = 15000): Promise<T> => {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        setTimeout(() => reject(new Error(`${label} timed out.`)), ms);
+      }),
+    ]);
+  };
+
+  // Load real user data from Supabase on mount
+  useEffect(() => {
+    getUser().then(async (user) => {
+      if (!user) return;
+      setDisplayName(user.user_metadata?.full_name ?? "");
+      setEmail(user.email ?? "");
+      const fallbackAvatar = resolvePreferredAvatarUrl(
+        user.id,
+        (user.user_metadata?.avatar_url as string | undefined)
+          ?? (user.user_metadata?.picture as string | undefined)
+          ?? null,
+      );
+      setAvatar(fallbackAvatar);
+      setAvatarCache(fallbackAvatar);
+      const remoteAvatar = await fetchRemoteAvatarPreference(user.id).catch(() => null);
+      if (remoteAvatar) {
+        setAvatar(remoteAvatar);
+        setAvatarCache(remoteAvatar);
+      }
+    });
+
+    if (!SUPABASE_CONFIGURED) return;
+
+    fetchCourses().then((dbCourses) => {
+      const mapped: Course[] = dbCourses.map((course) => ({
+        id: course.id,
+        code: course.code,
+        name: course.name ?? "",
+        color: course.color,
+        grade: "—",
+        progress: 0,
+        nextDue: "—",
+      }));
+      setCourses(mapped);
+      saveCourses(mapped);
+    });
+  }, []);
+
+  // Persist display name to Supabase when user finishes editing
+  const handleDisplayNameSave = async (v: string) => {
+    setDisplayName(v);
+    if (!SUPABASE_CONFIGURED) return;
+    setSaveStatus("saving");
+    const { error } = await updateProfile({ full_name: v });
+    setSaveStatus(error ? "error" : "saved");
+    setTimeout(() => setSaveStatus("idle"), 2000);
+  };
+
+  // Avatar upload — local preview + Supabase storage
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const previousAvatar = avatar;
+    let resolvedUserId: string | null = null;
+    // Local preview immediately
     const reader = new FileReader();
     reader.onload = ev => setAvatar(ev.target?.result as string);
     reader.readAsDataURL(f);
+    // Upload to Supabase
+    if (SUPABASE_CONFIGURED) {
+      setSaveStatus("saving");
+      if (avatarSaveTimeoutRef.current !== null) {
+        window.clearTimeout(avatarSaveTimeoutRef.current);
+      }
+      avatarSaveTimeoutRef.current = window.setTimeout(() => {
+        setAvatar(previousAvatar);
+        setAvatarCache(previousAvatar);
+        setSaveStatus("error");
+      }, 18000);
+      try {
+        const user = await withTimeout(getUser(), "User refresh");
+        resolvedUserId = user?.id ?? null;
+        const url = await withTimeout(uploadAvatar(f), "Avatar upload");
+        if (!url) {
+          throw new Error("Avatar upload failed.");
+        }
+        if (!resolvedUserId) {
+          throw new Error("No signed-in user was found for avatar save.");
+        }
+        await withTimeout(saveRemoteAvatarPreference(resolvedUserId, url), "Profile preference sync");
+
+        setAvatar(url);
+        setAvatarCache(url);
+        saveCustomAvatarUrl(resolvedUserId, url);
+        setSaveStatus("saved");
+      } catch {
+        setAvatar(previousAvatar);
+        setAvatarCache(previousAvatar);
+        if (resolvedUserId) saveCustomAvatarUrl(resolvedUserId, previousAvatar);
+        setSaveStatus("error");
+      } finally {
+        if (avatarSaveTimeoutRef.current !== null) {
+          window.clearTimeout(avatarSaveTimeoutRef.current);
+          avatarSaveTimeoutRef.current = null;
+        }
+        setTimeout(() => setSaveStatus("idle"), 2000);
+      }
+    }
+    e.currentTarget.value = "";
   };
 
-  const handleDeleteCourse = (id: string) => {
+  // Change password
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError(null);
+    if (!pwFields.next || !pwFields.confirm) { setPwError("Fill in all fields."); return; }
+    if (pwFields.next !== pwFields.confirm)   { setPwError("New passwords don't match."); return; }
+    if (pwFields.next.length < 6)             { setPwError("Password must be at least 6 characters."); return; }
+    if (!SUPABASE_CONFIGURED) { setPwSuccess(true); return; }
+    setPwLoading(true);
+    const { error } = await updatePassword(pwFields.next);
+    setPwLoading(false);
+    if (error) { setPwError(error.message); return; }
+    setPwSuccess(true);
+    setPwFields({ current:"", next:"", confirm:"" });
+    setTimeout(() => { setPwSuccess(false); setChangePwOpen(false); }, 2000);
+  };
+
+  const handleDeleteCourse = async (id: string) => {
+    if (SUPABASE_CONFIGURED) {
+      const deleted = await dbDeleteCourse(id);
+      if (!deleted) return;
+    }
+
     const updated = courses.filter(c=>c.id!==id);
     setCourses(updated);
     saveCourses(updated);
+    deleteStoredCourseData(id);
+    saveDashboardSuggestionState(null);
     setDeleteTarget(null);
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
   };
 
   const initials = displayName.trim().split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
@@ -160,12 +307,12 @@ export function ProfilePage() {
 
       {/* ══ TOP NAV ══ */}
       <header style={{
-        height:"72px", display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"0 32px", background:"var(--bg-surface)", borderBottom:"1px solid var(--border)",
+        minHeight:isMobile ? "72px" : "72px", display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:isMobile ? "10px 14px" : "0 32px", background:"var(--bg-surface)", borderBottom:"1px solid var(--border)",
         position:"sticky", top:0, zIndex:20, flexShrink:0,
-        boxShadow:"0 1px 14px rgba(0,0,0,0.06)",
+        boxShadow:"0 1px 14px rgba(0,0,0,0.06)", gap:isMobile ? "10px" : "16px", flexWrap:isMobile ? "wrap" : "nowrap",
       }}>
-        <div style={{display:"flex", alignItems:"center", gap:"14px"}}>
+        <div style={{display:"flex", alignItems:"center", gap:isMobile ? "10px" : "14px", minWidth:0, flex:1}}>
           <button
             onClick={()=>navigate("/dashboard")}
             style={{display:"flex", alignItems:"center", gap:"5px", background:"none", border:"none", cursor:"pointer", color:"var(--text-muted)", fontFamily:F.body, fontSize:"0.84rem", padding:"5px 8px", borderRadius:"8px", transition:"color 0.15s, background 0.15s"}}
@@ -174,20 +321,20 @@ export function ProfilePage() {
           >
             <ChevronLeft size={16}/> Dashboard
           </button>
-          <span style={{color:"var(--border)"}}>›</span>
-          <div style={{display:"flex", alignItems:"center", gap:"10px"}}>
-            <img src={learnBeamLogo} alt="LearnBeam" style={{height:"54px", width:"54px", objectFit:"contain", filter:"drop-shadow(0 3px 10px rgba(0,0,0,0.14))"}}/>
-            <span style={{fontFamily:F.heading, fontWeight:800, fontSize:"1.2rem", color:"var(--text-primary)", letterSpacing:"-0.02em"}}>LearnBeam</span>
+          {!isMobile && <span style={{color:"var(--border)"}}>›</span>}
+          <div style={{display:"flex", alignItems:"center", gap:"10px", minWidth:0}}>
+            <img src={learnBeamLogo} alt="LearnBeam" style={{height:isMobile ? "42px" : "54px", width:isMobile ? "42px" : "54px", objectFit:"contain", filter:"drop-shadow(0 3px 10px rgba(0,0,0,0.14))"}}/>
+            <span style={{fontFamily:F.heading, fontWeight:800, fontSize:isMobile ? "1rem" : "1.2rem", color:"var(--text-primary)", letterSpacing:"-0.02em"}}>LearnBeam</span>
           </div>
         </div>
         <ThemeSwitcher/>
       </header>
 
       {/* ══ BODY ══ */}
-      <div style={{flex:1, display:"flex", maxWidth:"980px", width:"100%", margin:"0 auto", padding:"36px 36px 80px", boxSizing:"border-box", gap:"28px", alignItems:"flex-start"}}>
+      <div style={{flex:1, display:"flex", flexDirection:isMobile ? "column" : "row", maxWidth:"980px", width:"100%", margin:"0 auto", padding:isMobile ? "20px 16px 80px" : "36px 36px 80px", boxSizing:"border-box", gap:isMobile ? "20px" : "28px", alignItems:"flex-start"}}>
 
         {/* ── SIDEBAR NAV ── */}
-        <aside style={{width:"220px", flexShrink:0, position:"sticky", top:"96px"}}>
+        <aside style={{width:isMobile ? "100%" : "220px", flexShrink:0, position:isMobile ? "relative" : "sticky", top:isMobile ? "auto" : "96px"}}>
           {/* Avatar */}
           <div style={{display:"flex", flexDirection:"column", alignItems:"center", marginBottom:"28px"}}>
             <div style={{position:"relative", marginBottom:"13px"}}>
@@ -223,12 +370,12 @@ export function ProfilePage() {
             </div>
             <div style={{textAlign:"center"}}>
               <div style={{fontFamily:F.heading, fontWeight:800, fontSize:"0.96rem", color:"var(--text-primary)"}}>{displayName}</div>
-              <div style={{fontFamily:F.body, fontSize:"0.75rem", color:"var(--text-muted)", marginTop:"2px"}}>@{username}</div>
+              <div style={{fontFamily:F.body, fontSize:"0.75rem", color:"var(--text-muted)", marginTop:"2px"}}>{email}</div>
             </div>
           </div>
 
           {/* Nav items */}
-          <nav style={{display:"flex", flexDirection:"column", gap:"3px"}}>
+          <nav style={{display:"flex", flexDirection:isMobile ? "row" : "column", flexWrap:"wrap", gap:"8px"}}>
             {navItems.map(item=>(
               <button
                 key={item.id}
@@ -236,7 +383,7 @@ export function ProfilePage() {
                 style={{
                   display:"flex", alignItems:"center", gap:"10px",
                   padding:"10px 13px", borderRadius:"10px",
-                  border:"none", cursor:"pointer", textAlign:"left", width:"100%",
+                  border:"none", cursor:"pointer", textAlign:"left", width:isMobile ? "auto" : "100%",
                   fontFamily:F.body, fontSize:"0.85rem", fontWeight:section===item.id?700:500,
                   background:section===item.id?"var(--accent-soft)":"transparent",
                   color:section===item.id?"var(--accent)":"var(--text-secondary)",
@@ -250,14 +397,14 @@ export function ProfilePage() {
               </button>
             ))}
 
-            <div style={{height:"1px", background:"var(--border)", margin:"10px 0"}}/>
+            <div style={{height:isMobile ? "100%" : "1px", width:isMobile ? "1px" : "100%", background:"var(--border)", margin:isMobile ? "0 2px" : "10px 0"}}/>
 
             <button
-              onClick={()=>navigate("/")}
+              onClick={handleSignOut}
               style={{
                 display:"flex", alignItems:"center", gap:"10px",
                 padding:"10px 13px", borderRadius:"10px", border:"none",
-                cursor:"pointer", textAlign:"left", width:"100%",
+                cursor:"pointer", textAlign:"left", width:isMobile ? "auto" : "100%",
                 fontFamily:F.body, fontSize:"0.85rem", fontWeight:500,
                 background:"transparent", color:"var(--text-muted)",
                 transition:"all 0.15s",
@@ -283,9 +430,18 @@ export function ProfilePage() {
               </div>
 
               <div style={{background:"var(--bg-surface)", border:"1px solid var(--border)", borderRadius:"16px", padding:"28px 28px 24px"}}>
-                <EditableField label="Display Name"  value={displayName} onChange={setDisplayName} placeholder="Your name"/>
+                <EditableField label="Display Name"  value={displayName} onChange={handleDisplayNameSave} placeholder="Your name"/>
                 <EditableField label="Email Address" value={email}       onChange={setEmail}       type="email"   placeholder="you@example.com"/>
-                <EditableField label="Username"      value={username}    onChange={setUsername}    placeholder="username"/>
+
+                {/* Save status indicator */}
+                {saveStatus !== "idle" && (
+                  <div style={{ display:"flex", alignItems:"center", gap:"6px", fontSize:"0.78rem", color: saveStatus==="saved"?"#66B539":saveStatus==="error"?"#ef4444":"var(--text-muted)", marginTop:"-4px", marginBottom:"12px" }}>
+                    {saveStatus==="saving" && <span style={{ display:"inline-block", width:"12px", height:"12px", border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>}
+                    {saveStatus==="saved"  && <CheckCircle2 size={13}/>}
+                    {saveStatus==="saving" ? "Saving…" : saveStatus==="saved" ? "Saved" : "Error saving"}
+                    <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+                  </div>
+                )}
 
                 <div style={{marginTop:"8px", padding:"12px 14px", background:"var(--accent-soft)", borderRadius:"10px", border:"1px solid var(--border)"}}>
                   <p style={{fontFamily:F.body, fontSize:"0.78rem", color:"var(--accent)", margin:0, fontWeight:500}}>
@@ -318,7 +474,7 @@ export function ProfilePage() {
               ) : (
                 <div style={{display:"flex", flexDirection:"column", gap:"10px"}}>
                   {courses.map(c=>(
-                    <div key={c.id} style={{display:"flex", alignItems:"center", gap:"14px", background:"var(--bg-surface)", border:"1px solid var(--border)", borderRadius:"13px", padding:"16px 18px", transition:"box-shadow 0.2s"}}
+                    <div key={c.id} style={{display:"flex", flexDirection:isMobile ? "column" : "row", alignItems:isMobile ? "stretch" : "center", gap:"14px", background:"var(--bg-surface)", border:"1px solid var(--border)", borderRadius:"13px", padding:"16px 18px", transition:"box-shadow 0.2s"}}
                       onMouseEnter={e=>(e.currentTarget as HTMLDivElement).style.boxShadow="0 6px 20px rgba(0,0,0,0.08)"}
                       onMouseLeave={e=>(e.currentTarget as HTMLDivElement).style.boxShadow="none"}
                     >
@@ -329,10 +485,10 @@ export function ProfilePage() {
                         <div style={{fontFamily:F.heading, fontWeight:800, fontSize:"0.94rem", color:"var(--text-primary)"}}>{c.code}</div>
                         {c.name && <div style={{fontFamily:F.body, fontSize:"0.74rem", color:"var(--text-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.name}</div>}
                       </div>
-                      <div style={{display:"flex", alignItems:"center", gap:"8px"}}>
+                      <div style={{display:"flex", alignItems:"center", gap:"8px", width:isMobile ? "100%" : "auto"}}>
                         <button
                           onClick={()=>navigate(`/course/${c.id}`)}
-                          style={{display:"flex", alignItems:"center", gap:"4px", background:"var(--bg-secondary)", border:"1px solid var(--border)", borderRadius:"8px", padding:"6px 12px", fontFamily:F.body, fontSize:"0.75rem", fontWeight:600, cursor:"pointer", color:"var(--text-secondary)", transition:"all 0.15s"}}
+                          style={{display:"flex", alignItems:"center", justifyContent:"center", gap:"4px", background:"var(--bg-secondary)", border:"1px solid var(--border)", borderRadius:"8px", padding:"6px 12px", fontFamily:F.body, fontSize:"0.75rem", fontWeight:600, cursor:"pointer", color:"var(--text-secondary)", transition:"all 0.15s", flex:isMobile ? 1 : "initial"}}
                           onMouseEnter={e=>{const b=e.currentTarget as HTMLButtonElement;b.style.borderColor="var(--accent)";b.style.color="var(--accent)";}}
                           onMouseLeave={e=>{const b=e.currentTarget as HTMLButtonElement;b.style.borderColor="var(--border)";b.style.color="var(--text-secondary)";}}
                         >
@@ -417,12 +573,13 @@ export function ProfilePage() {
                   <span style={{fontFamily:F.heading, fontWeight:800, fontSize:"0.9rem", color:"var(--text-primary)"}}>Security</span>
                 </div>
                 {[
-                  { label:"Change Password",     sub:"Update your login credentials"       },
-                  { label:"Two-Factor Auth",      sub:"Add an extra layer of security"      },
-                  { label:"Connected Accounts",   sub:"Manage Google sign-in"               },
-                  { label:"Delete Account",       sub:"Permanently remove your data", danger:true },
+                  { label:"Change Password",    sub:"Update your login credentials",    action:()=>setChangePwOpen(true) },
+                  { label:"Two-Factor Auth",    sub:"Add an extra layer of security",   action:()=>{} },
+                  { label:"Connected Accounts", sub:"Manage Google sign-in",            action:()=>{} },
+                  { label:"Delete Account",     sub:"Permanently remove your data",     action:()=>{}, danger:true },
                 ].map((item,i)=>(
                   <button key={i}
+                    onClick={item.action}
                     style={{
                       width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
                       padding:"14px 20px", borderTop:i!==0?"1px solid var(--border)":undefined,
@@ -450,9 +607,60 @@ export function ProfilePage() {
       {deleteTarget && (
         <ConfirmDelete
           label={deleteTarget.code + (deleteTarget.name ? ` — ${deleteTarget.name}` : "")}
-          onConfirm={()=>handleDeleteCourse(deleteTarget.id)}
+          onConfirm={() => void handleDeleteCourse(deleteTarget.id)}
           onCancel={()=>setDeleteTarget(null)}
         />
+      )}
+
+      {/* ── CHANGE PASSWORD MODAL ── */}
+      {changePwOpen && (
+        <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.52)",backdropFilter:"blur(9px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}
+          onClick={e=>e.target===e.currentTarget&&setChangePwOpen(false)}>
+          <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"22px",width:"100%",maxWidth:"400px",boxShadow:"0 36px 90px rgba(0,0,0,0.24)",overflow:"hidden",animation:"modalIn 0.26s cubic-bezier(0.34,1.56,0.64,1)"}}>
+            <div style={{padding:"20px 24px 16px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--section-bg)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"9px"}}>
+                <div style={{width:"32px",height:"32px",borderRadius:"9px",background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center"}}><KeyRound size={15} style={{color:"var(--primary-foreground)"}}/></div>
+                <div>
+                  <div style={{fontFamily:F.heading,fontWeight:800,fontSize:"1rem",color:"var(--text-primary)"}}>Change Password</div>
+                  <div style={{fontFamily:F.body,fontSize:"0.7rem",color:"var(--text-muted)"}}>Enter a new strong password</div>
+                </div>
+              </div>
+              <button onClick={()=>setChangePwOpen(false)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",padding:"4px",display:"flex",borderRadius:"7px"}}><X size={17}/></button>
+            </div>
+            <form onSubmit={handleChangePassword} style={{padding:"24px",display:"flex",flexDirection:"column",gap:"14px"}}>
+              {pwSuccess ? (
+                <div style={{textAlign:"center",padding:"20px 0"}}>
+                  <div style={{width:"56px",height:"56px",borderRadius:"50%",background:"rgba(102,181,57,0.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px"}}>
+                    <CheckCircle2 size={26} style={{color:"#66B539"}}/>
+                  </div>
+                  <p style={{fontFamily:F.heading,fontWeight:700,fontSize:"1rem",color:"var(--text-primary)",margin:"0 0 5px"}}>Password updated!</p>
+                  <p style={{fontFamily:F.body,fontSize:"0.82rem",color:"var(--text-muted)",margin:0}}>Your new password is active.</p>
+                </div>
+              ) : (
+                <>
+                  {[
+                    {key:"next",    label:"New Password",     ph:"At least 6 characters"},
+                    {key:"confirm", label:"Confirm Password", ph:"Repeat new password"},
+                  ].map(f=>(
+                    <div key={f.key}>
+                      <label style={{fontFamily:F.body,fontSize:"0.78rem",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>{f.label}</label>
+                      <input type="password" value={(pwFields as any)[f.key]} onChange={e=>setPwFields(p=>({...p,[f.key]:e.target.value}))} placeholder={f.ph}
+                        style={{width:"100%",boxSizing:"border-box",padding:"11px 14px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--input)",color:"var(--text-primary)",fontFamily:F.body,fontSize:"0.9rem",outline:"none"}}
+                        onFocus={e=>{e.target.style.borderColor="var(--accent)";e.target.style.boxShadow="0 0 0 3px var(--accent-soft)";}}
+                        onBlur={e=>{e.target.style.borderColor="var(--border)";e.target.style.boxShadow="none";}}
+                      />
+                    </div>
+                  ))}
+                  {pwError && <div style={{padding:"10px 13px",borderRadius:"9px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.2)",fontSize:"0.82rem",color:"#ef4444"}}>{pwError}</div>}
+                  <button type="submit" disabled={pwLoading} style={{padding:"13px",borderRadius:"11px",background:"var(--accent)",color:"var(--primary-foreground)",border:"none",fontFamily:F.heading,fontWeight:700,fontSize:"0.9rem",cursor:pwLoading?"not-allowed":"pointer",opacity:pwLoading?0.7:1,boxShadow:"0 4px 14px var(--accent-glow)"}}>
+                    {pwLoading?"Updating…":"Update Password"}
+                  </button>
+                </>
+              )}
+            </form>
+          </div>
+          <style>{`@keyframes modalIn{from{opacity:0;transform:scale(0.92) translateY(16px)}to{opacity:1;transform:scale(1) translateY(0)}}`}</style>
+        </div>
       )}
 
     </div>
