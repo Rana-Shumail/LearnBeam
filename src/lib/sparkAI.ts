@@ -26,7 +26,7 @@ export type SparkAIResult = {
   citations: SparkAICitation[];
   grounded: boolean;
   model: string | null;
-  provider: "gemini" | "cerebras" | "groq" | "nvidia" | null;
+  provider: "gemini" | "cerebras" | "groq" | "huggingface" | "nvidia" | null;
   searchProvider: "tinyfish" | "gemini" | "groq" | null;
 };
 
@@ -196,7 +196,7 @@ async function invokeEdgeFunction(messages: SparkAIMessage[], options?: SparkAIO
     citations: normalizeCitations(payload?.citations),
     grounded: Boolean(payload?.grounded),
     model: typeof payload?.model === "string" ? payload.model : null,
-    provider: payload?.provider === "cerebras" || payload?.provider === "gemini" || payload?.provider === "groq" || payload?.provider === "nvidia"
+    provider: payload?.provider === "cerebras" || payload?.provider === "gemini" || payload?.provider === "groq" || payload?.provider === "huggingface" || payload?.provider === "nvidia"
       ? payload.provider
       : null,
     searchProvider: payload?.searchProvider === "tinyfish" || payload?.searchProvider === "gemini" || payload?.searchProvider === "groq"

@@ -55,7 +55,7 @@ export type StoredSparkCitation = {
   kind?: "document" | "web";
 };
 
-export type StoredSparkProvider = "gemini" | "cerebras" | "groq" | "nvidia";
+export type StoredSparkProvider = "gemini" | "cerebras" | "groq" | "huggingface" | "nvidia";
 export type StoredSearchProvider = "tinyfish" | "gemini" | "groq";
 export type StoredSparkMode = "course" | "global";
 
@@ -293,7 +293,7 @@ function normalizeChatHistory(items: unknown): StoredSparkMessage[] {
       citations,
       flagged: Boolean(record.flagged),
       flagNote: typeof record.flagNote === "string" ? record.flagNote : null,
-      provider: record.provider === "cerebras" || record.provider === "gemini" || record.provider === "groq" || record.provider === "nvidia"
+      provider: record.provider === "cerebras" || record.provider === "gemini" || record.provider === "groq" || record.provider === "huggingface" || record.provider === "nvidia"
         ? record.provider
         : null,
       searchProvider: record.searchProvider === "tinyfish" || record.searchProvider === "gemini" || record.searchProvider === "groq"

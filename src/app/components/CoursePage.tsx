@@ -663,7 +663,7 @@ export function CoursePage() {
       );
       setMessages(prev => prev.map(m => m.id === streamId ? {
         ...m,
-        provider: result.provider === "cerebras" || result.provider === "gemini" || result.provider === "groq" || result.provider === "nvidia"
+        provider: result.provider === "cerebras" || result.provider === "gemini" || result.provider === "groq" || result.provider === "huggingface" || result.provider === "nvidia"
           ? result.provider
           : null,
         searchProvider: result.searchProvider === "tinyfish" || result.searchProvider === "gemini" || result.searchProvider === "groq"

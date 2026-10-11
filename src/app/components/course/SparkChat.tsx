@@ -44,6 +44,15 @@ function getProviderBadge(provider: ChatMsg["provider"]) {
     };
   }
 
+  if (provider === "huggingface") {
+    return {
+      label: "Powered by Hugging Face",
+      textColor: "#b45309",
+      background: "rgba(251, 146, 60, 0.13)",
+      borderColor: "rgba(194, 65, 12, 0.18)",
+    };
+  }
+
   return null;
 }
 

@@ -18,7 +18,7 @@ type IncomingBody = {
   task?: unknown;
 };
 
-type SparkProvider = "gemini" | "cerebras" | "groq" | "nvidia";
+type SparkProvider = "gemini" | "cerebras" | "groq" | "huggingface" | "nvidia";
 type SparkSearchProvider = "tinyfish" | "gemini" | "groq";
 
 type SparkTask =
@@ -148,6 +148,13 @@ const GROQ_VISION_MODEL = Deno.env.get("GROQ_VISION_MODEL")?.trim() || "meta-lla
 const NVIDIA_API_KEY = Deno.env.get("NVIDIA_API_KEY")?.trim();
 const NVIDIA_MODEL = Deno.env.get("NVIDIA_MODEL")?.trim() || "nvidia/nemotron-3.5-lightning-30b-a3b";
 const NVIDIA_FALLBACK_MODEL = Deno.env.get("NVIDIA_FALLBACK_MODEL")?.trim() || "nvidia/nemotron-3-super-120b-a12b";
+
+const HUGGING_FACE_API_KEY = Deno.env.get("HF_TOKEN")?.trim()
+  || Deno.env.get("HUGGING_FACE_API_KEY")?.trim();
+const HUGGING_FACE_MODEL = Deno.env.get("HUGGING_FACE_MODEL")?.trim()
+  || "Qwen/Qwen3.5-9B:fastest";
+const HUGGING_FACE_FALLBACK_MODEL = Deno.env.get("HUGGING_FACE_FALLBACK_MODEL")?.trim()
+  || "openai/gpt-oss-20b:fastest";
 
 const TINYFISH_API_KEY = Deno.env.get("TINYFISH_API_KEY")?.trim();
 const TINYFISH_SEARCH_ENDPOINT = Deno.env.get("TINYFISH_SEARCH_ENDPOINT")?.trim() || "https://api.search.tinyfish.ai";
@@ -426,7 +433,11 @@ function extractOpenAICompatibleCitations(payload: OpenAICompatibleResponse | nu
 }
 
 function isQuotaError(message: string) {
-  return /quota|rate limit|too many requests|retry in|high demand|temporarily unavailable|overloaded|service unavailable|spikes in demand|status 503|status 500/i.test(message);
+  return /quota|rate limit|too many requests|retry in|high demand|temporarily unavailable|overloaded|service unavailable|spikes in demand|no remaining credits|insufficient balance|payment required|status 402|status 503|status 500/i.test(message);
+}
+
+function isAccountCreditError(message: string) {
+  return /no remaining credits|purchase pre-paid credits|insufficient balance|payment required|status 402/i.test(message);
 }
 
 function isRecoverableModelError(message: string) {
@@ -806,6 +817,17 @@ function buildNvidiaPayload(model: string, messages: SparkAIMessage[]) {
   };
 }
 
+function buildHuggingFacePayload(model: string, messages: SparkAIMessage[]) {
+  return {
+    model,
+    messages: buildTextOnlyMessages(messages),
+    temperature: 0.2,
+    max_tokens: 4096,
+    stream: false,
+    ...(likelyRequestsJson(messages) ? { response_format: { type: "json_object" } } : {}),
+  };
+}
+
 async function callGroqOnce(
   model: string,
   messages: SparkAIMessage[],
@@ -942,6 +964,53 @@ async function callNvidia(messages: SparkAIMessage[]) {
   }
 }
 
+async function callHuggingFaceOnce(model: string, messages: SparkAIMessage[]): Promise<SparkResult> {
+  if (!HUGGING_FACE_API_KEY) {
+    throw new Error("HF_TOKEN is not set for the spark-ai Edge Function.");
+  }
+
+  const endpoint = "https://router.huggingface.co/v1/chat/completions";
+  const response = await fetchWithTimeout(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HUGGING_FACE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildHuggingFacePayload(model, messages)),
+  });
+
+  const payload = await response.json().catch(() => null) as OpenAICompatibleResponse | null;
+  if (!response.ok) {
+    const base = payload?.error?.message || `Hugging Face request failed with status ${response.status}.`;
+    throw new Error(`${base} [model=${model}]`);
+  }
+
+  const content = extractOpenAICompatibleText(payload);
+  if (!content) {
+    throw new Error("Hugging Face returned an empty response.");
+  }
+
+  return {
+    content,
+    citations: [],
+    grounded: false,
+    model,
+    provider: "huggingface",
+  };
+}
+
+async function callHuggingFace(messages: SparkAIMessage[]) {
+  try {
+    return await callHuggingFaceOnce(HUGGING_FACE_MODEL, messages);
+  } catch (error) {
+    const message = describeProviderError(error);
+    if (isAccountCreditError(message)) throw error;
+    if (!isQuotaError(message) && !isRecoverableModelError(message)) throw error;
+    if (!HUGGING_FACE_FALLBACK_MODEL || HUGGING_FACE_FALLBACK_MODEL === HUGGING_FACE_MODEL) throw error;
+    return callHuggingFaceOnce(HUGGING_FACE_FALLBACK_MODEL, messages);
+  }
+}
+
 async function runProviderChain(
   configuredAttempts: ProviderAttempt[],
   messages: SparkAIMessage[],
@@ -1010,6 +1079,12 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
       run: (currentMessages) => callGroq(currentMessages, "text"),
     },
     {
+      label: "Hugging Face",
+      provider: "huggingface" as const,
+      configured: Boolean(HUGGING_FACE_API_KEY),
+      run: (currentMessages) => callHuggingFace(currentMessages),
+    },
+    {
       label: "NVIDIA",
       provider: "nvidia" as const,
       configured: Boolean(NVIDIA_API_KEY),
@@ -1067,7 +1142,7 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
 
   if (useSearch) {
     // Attempt grounded search first, then fall back to text providers
-    // (Cerebras, Groq, NVIDIA, Gemini) so general chat never gets completely blocked.
+    // (Cerebras, Groq, Hugging Face, NVIDIA, Gemini) so general chat never gets completely blocked.
     return [...searchChain, ...textChain];
   }
 
@@ -1105,6 +1180,12 @@ function buildTinyFishModelAttempts(): ProviderAttempt[] {
       provider: "groq" as const,
       configured: getGroqApiKeys().length > 0,
       run: (currentMessages) => callGroq(currentMessages, "text"),
+    },
+    {
+      label: "Hugging Face",
+      provider: "huggingface" as const,
+      configured: Boolean(HUGGING_FACE_API_KEY),
+      run: (currentMessages) => callHuggingFace(currentMessages),
     },
     {
       label: "NVIDIA",
