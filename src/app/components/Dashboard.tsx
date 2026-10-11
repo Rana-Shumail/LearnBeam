@@ -48,6 +48,23 @@ export type Course = {
 
 const COURSE_COLORS = ["#66B539","#3b82f6","#f59e0b","#8b5cf6","#ef4444","#06b6d4"];
 
+const COURSE_TILE_STYLES: Record<string, {
+  start: string;
+  end: string;
+  text: string;
+  muted: string;
+  soft: string;
+  track: string;
+  border: string;
+}> = {
+  "#66B539": { start:"#79c94b", end:"#438d25", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(22,68,12,0.28)", border:"rgba(255,255,255,0.28)" },
+  "#3b82f6": { start:"#5b9af8", end:"#2864d6", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(13,51,120,0.28)", border:"rgba(255,255,255,0.28)" },
+  "#f59e0b": { start:"#ffc53d", end:"#e28a00", text:"#291b05", muted:"rgba(41,27,5,0.68)", soft:"rgba(255,255,255,0.30)", track:"rgba(90,52,0,0.22)", border:"rgba(255,255,255,0.38)" },
+  "#8b5cf6": { start:"#a47bfa", end:"#7140da", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(54,23,117,0.28)", border:"rgba(255,255,255,0.28)" },
+  "#ef4444": { start:"#f56565", end:"#ce3030", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(115,18,18,0.28)", border:"rgba(255,255,255,0.28)" },
+  "#06b6d4": { start:"#27c8df", end:"#078da8", text:"#ffffff", muted:"rgba(255,255,255,0.80)", soft:"rgba(255,255,255,0.20)", track:"rgba(5,74,88,0.26)", border:"rgba(255,255,255,0.30)" },
+};
+
 function normalizeCourseColor(value: string) {
   return COURSE_COLORS.includes(value) ? value : COURSE_COLORS[0];
 }
@@ -1222,20 +1239,23 @@ export function Dashboard() {
             </div>
           ) : (
             <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "repeat(auto-fill,minmax(265px,1fr))", gap:"15px"}}>
-              {courses.map(c=>(
+              {courses.map(c=>{
+                const tileStyle = COURSE_TILE_STYLES[normalizeCourseColor(c.color)] ?? COURSE_TILE_STYLES[COURSE_COLORS[0]];
+                return (
                 <div
                   key={c.id}
                   onClick={()=>navigate(`/course/${c.id}`)}
                   className="course-tile"
                   style={{
-                    background:`linear-gradient(145deg, ${c.color}13 0%, var(--bg-surface) 46%, var(--bg-surface) 100%)`, border:`1px solid ${c.color}30`,
+                    background:`linear-gradient(120deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.04) 34%, transparent 62%), linear-gradient(145deg, ${tileStyle.start} 0%, ${tileStyle.end} 100%)`,
+                    border:`1px solid ${tileStyle.border}`,
                     borderRadius:"16px", padding:isMobile ? "18px" : "22px", cursor:"pointer",
                     transition:"box-shadow 0.2s, transform 0.18s", position:"relative", overflow:"visible",
+                    boxShadow:`0 10px 26px ${c.color}30, inset 0 1px 0 rgba(255,255,255,0.30)`,
                   }}
-                  onMouseEnter={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="0 14px 36px rgba(0,0,0,0.12)";el.style.transform="translateY(-3px)";}}
-                  onMouseLeave={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="none";el.style.transform="translateY(0)";}}
+                  onMouseEnter={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow=`0 18px 42px ${c.color}45, inset 0 1px 0 rgba(255,255,255,0.34)`;el.style.transform="translateY(-3px)";}}
+                  onMouseLeave={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow=`0 10px 26px ${c.color}30, inset 0 1px 0 rgba(255,255,255,0.30)`;el.style.transform="translateY(0)";}}
                 >
-                  <div style={{position:"absolute", top:0, left:0, right:0, height:"4px", background:`linear-gradient(90deg, ${c.color}, ${c.color}99)`, borderRadius:"16px 16px 0 0"}}/>
                   <div
                     ref={courseMenuId === c.id ? courseMenuRef : undefined}
                     style={{position:"absolute", top:"12px", right:"12px", zIndex:4}}
@@ -1246,6 +1266,7 @@ export function Dashboard() {
                       aria-label={`Course options for ${c.code}`}
                       aria-expanded={courseMenuId === c.id}
                       onClick={() => setCourseMenuId((current) => current === c.id ? null : c.id)}
+                      style={{background:tileStyle.soft, borderColor:tileStyle.border, color:tileStyle.text}}
                     >
                       <MoreHorizontal size={18}/>
                     </button>
@@ -1278,30 +1299,31 @@ export function Dashboard() {
                     )}
                   </div>
                   <div style={{display:"flex", alignItems:"center", gap:"12px", marginBottom:"18px"}}>
-                    <div style={{width:"44px", height:"44px", borderRadius:"12px", background:`${c.color}1a`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
-                      <GraduationCap size={20} style={{color:c.color}}/>
+                    <div style={{width:"44px", height:"44px", borderRadius:"12px", background:tileStyle.soft, border:`1px solid ${tileStyle.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+                      <GraduationCap size={20} style={{color:tileStyle.text}}/>
                     </div>
                     <div style={{minWidth:0}}>
-                      <div style={{fontFamily:F.heading, fontSize:"1rem", fontWeight:800, color:"var(--text-primary)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.code}</div>
-                      {c.name && <div style={{fontFamily:F.body, fontSize:"0.73rem", color:"var(--text-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.name}</div>}
+                      <div style={{fontFamily:F.heading, fontSize:"1rem", fontWeight:800, color:tileStyle.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.code}</div>
+                      {c.name && <div style={{fontFamily:F.body, fontSize:"0.73rem", color:tileStyle.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.name}</div>}
                     </div>
                   </div>
-                  <div style={{height:"4px", borderRadius:"99px", background:"var(--bg-secondary)", overflow:"hidden", marginBottom:"13px"}}>
-                    <div style={{height:"100%", width:`${c.progress}%`, background:c.color, borderRadius:"99px", transition:"width 0.4s ease"}}/>
+                  <div style={{height:"4px", borderRadius:"99px", background:tileStyle.track, overflow:"hidden", marginBottom:"13px"}}>
+                    <div style={{height:"100%", width:`${c.progress}%`, background:tileStyle.text, borderRadius:"99px", transition:"width 0.4s ease"}}/>
                   </div>
                   <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
                     <div>
-                      <div style={{fontFamily:F.heading, fontSize:"1.3rem", fontWeight:800, color:c.color, lineHeight:1}}>{c.grade}</div>
-                      <div style={{fontFamily:F.body, fontSize:"0.68rem", color:"var(--text-muted)", marginTop:"1px"}}>Grade</div>
+                      <div style={{fontFamily:F.heading, fontSize:"1.3rem", fontWeight:800, color:tileStyle.text, lineHeight:1}}>{c.grade}</div>
+                      <div style={{fontFamily:F.body, fontSize:"0.68rem", color:tileStyle.muted, marginTop:"1px"}}>Grade</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontFamily:F.heading, fontSize:"0.94rem", fontWeight:700, color:"var(--text-primary)"}}>{c.progress}%</div>
-                      <div style={{fontFamily:F.body, fontSize:"0.68rem", color:"var(--text-muted)"}}>Progress</div>
+                      <div style={{fontFamily:F.heading, fontSize:"0.94rem", fontWeight:700, color:tileStyle.text}}>{c.progress}%</div>
+                      <div style={{fontFamily:F.body, fontSize:"0.68rem", color:tileStyle.muted}}>Progress</div>
                     </div>
-                    <ChevronRight size={15} style={{color:"var(--text-muted)"}}/>
+                    <ChevronRight size={15} style={{color:tileStyle.muted}}/>
                   </div>
                 </div>
-              ))}
+                );
+              })}
 
               {/* Inline add card */}
               <div
