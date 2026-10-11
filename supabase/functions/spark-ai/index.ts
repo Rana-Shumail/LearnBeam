@@ -127,14 +127,22 @@ const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-3.8-flash";
 const GEMINI_FALLBACK_MODEL = Deno.env.get("GEMINI_FALLBACK_MODEL")?.trim() || "gemini-2.5-flash-lite";
 
 const CEREBRAS_API_KEY = Deno.env.get("CEREBRAS_API_KEY")?.trim();
-// "gpt-oss-120b" is a Groq model name — the correct Cerebras model names use the llama naming scheme.
-const CEREBRAS_MODEL = Deno.env.get("CEREBRAS_MODEL")?.trim() || "llama-3.3-70b";
+const configuredCerebrasModel = Deno.env.get("CEREBRAS_MODEL")?.trim();
+// Migrate the previous model name without requiring an immediate hosted-secret update.
+const CEREBRAS_MODEL = configuredCerebrasModel === "llama-3.3-70b"
+  ? "gpt-oss-120b"
+  : configuredCerebrasModel || "gpt-oss-120b";
 const CEREBRAS_FALLBACK_MODEL = Deno.env.get("CEREBRAS_FALLBACK_MODEL")?.trim() || "llama3.1-8b";
 
 const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY")?.trim();
 const GROQ_MODEL = Deno.env.get("GROQ_MODEL")?.trim() || "openai/gpt-oss-20b";
 const GROQ_FALLBACK_MODEL = Deno.env.get("GROQ_FALLBACK_MODEL")?.trim() || "openai/gpt-oss-120b";
-const GROQ_SEARCH_MODEL = Deno.env.get("GROQ_SEARCH_MODEL")?.trim() || "groq/compound-mini";
+const configuredGroqSearchModel = Deno.env.get("GROQ_SEARCH_MODEL")?.trim();
+// Compound and Compound Mini were retired. Transparently migrate an old hosted
+// secret to Groq's supported GPT-OSS browser-search flow.
+const GROQ_SEARCH_MODEL = configuredGroqSearchModel?.startsWith("groq/compound")
+  ? GROQ_MODEL
+  : configuredGroqSearchModel || GROQ_MODEL;
 const GROQ_VISION_MODEL = Deno.env.get("GROQ_VISION_MODEL")?.trim() || "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const NVIDIA_API_KEY = Deno.env.get("NVIDIA_API_KEY")?.trim();
@@ -153,6 +161,25 @@ function jsonResponse(payload: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function fetchWithTimeout(
+  input: string | URL,
+  init: RequestInit,
+  timeoutMs = 30_000,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Provider request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalizeImages(images: unknown): Array<{ data: string; mimeType: string }> {
@@ -500,7 +527,7 @@ async function callTinyFishSearch(query: string, purpose: string) {
   endpoint.searchParams.set("location", "US");
   endpoint.searchParams.set("language", "en");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchWithTimeout(endpoint.toString(), {
     method: "GET",
     headers: {
       "X-API-Key": TINYFISH_API_KEY,
@@ -527,7 +554,7 @@ async function callTinyFishFetch(urls: string[], purpose: string) {
     throw new Error("TINYFISH_API_KEY is not set for the spark-ai Edge Function.");
   }
 
-  const response = await fetch(TINYFISH_FETCH_ENDPOINT, {
+  const response = await fetchWithTimeout(TINYFISH_FETCH_ENDPOINT, {
     method: "POST",
     headers: {
       "X-API-Key": TINYFISH_API_KEY,
@@ -598,19 +625,6 @@ async function buildTinyFishAugmentedMessages(messages: SparkAIMessage[], task: 
   };
 }
 
-function prependHandoffInstruction(messages: SparkAIMessage[], attemptedProviders: string[]) {
-  if (attemptedProviders.length === 0) return messages;
-
-  return [
-    {
-      role: "system" as const,
-      content: `You are taking over an existing Spark response after another provider became unavailable (${attemptedProviders.join(", ")}). Continue the same conversation naturally. Do not restart the answer, do not repeat a greeting, and do not mention provider switching unless the user explicitly asks.`,
-      images: [],
-    },
-    ...messages,
-  ];
-}
-
 async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSearch = false, apiKey?: string): Promise<SparkResult> {
   const key = apiKey || GEMINI_API_KEY;
   if (!key) {
@@ -618,7 +632,7 @@ async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSear
   }
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: {
       "x-goog-api-key": key,
@@ -695,7 +709,7 @@ async function callCerebrasOnce(model: string, messages: SparkAIMessage[], apiKe
   }
 
   const endpoint = "https://api.cerebras.ai/v1/chat/completions";
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -750,16 +764,12 @@ async function callCerebras(messages: SparkAIMessage[]) {
   throw lastError ?? new Error("All Cerebras API keys and models exhausted.");
 }
 
-function isGroqCompoundModel(model: string) {
-  return model.startsWith("groq/compound");
-}
-
 function isGroqBrowserSearchModel(model: string) {
   return model.startsWith("openai/gpt-oss-");
 }
 
 function isGroqSearchCapableModel(model: string) {
-  return isGroqCompoundModel(model) || isGroqBrowserSearchModel(model);
+  return isGroqBrowserSearchModel(model);
 }
 
 function buildOpenAICompatiblePayload(
@@ -776,16 +786,7 @@ function buildOpenAICompatiblePayload(
     messages: buildOpenAICompatibleMessages(messages, options?.allowImages === true),
     temperature: 0.2,
     max_tokens: 4096,
-    ...(likelyRequestsJson(messages) ? { response_format: { type: "json_object" } } : {}),
-    ...(options?.groundedSearch && isGroqCompoundModel(model)
-      ? {
-          compound_custom: {
-            tools: {
-              enabled_tools: ["web_search"],
-            },
-          },
-        }
-      : {}),
+    ...(!options?.groundedSearch && likelyRequestsJson(messages) ? { response_format: { type: "json_object" } } : {}),
     ...(options?.groundedSearch && isGroqBrowserSearchModel(model)
       ? {
           tool_choice: "auto",
@@ -817,7 +818,7 @@ async function callGroqOnce(
   }
 
   const endpoint = "https://api.groq.com/openai/v1/chat/completions";
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -844,7 +845,7 @@ async function callGroqOnce(
   return {
     content,
     citations,
-    grounded: Boolean(options?.grounded) || citations.length > 0,
+    grounded: citations.length > 0,
     model,
     provider: "groq",
   };
@@ -901,7 +902,7 @@ async function callNvidiaOnce(model: string, messages: SparkAIMessage[]): Promis
   }
 
   const endpoint = "https://integrate.api.nvidia.com/v1/chat/completions";
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${NVIDIA_API_KEY}`,
@@ -946,19 +947,16 @@ async function runProviderChain(
   messages: SparkAIMessage[],
 ): Promise<{ result: SparkResult | null; failures: string[] }> {
   const failures: string[] = [];
-  const attemptedProviders: string[] = [];
-
   for (let i = 0; i < configuredAttempts.length; i++) {
     const attempt = configuredAttempts[i];
     try {
-      const handoffMessages = prependHandoffInstruction(messages, attemptedProviders);
-      const result = await attempt.run(handoffMessages);
+      const result = await attempt.run(messages);
 
       if (looksLikeTruncated(result.content) && i + 1 < configuredAttempts.length) {
         const nextAttempt = configuredAttempts[i + 1];
         try {
           const continuationMessages: SparkAIMessage[] = [
-            ...handoffMessages,
+            ...messages,
             {
               role: "assistant",
               content: result.content,
@@ -988,7 +986,6 @@ async function runProviderChain(
 
       return { result, failures };
     } catch (error) {
-      attemptedProviders.push(attempt.label);
       failures.push(`${attempt.label}: ${describeProviderError(error)}`);
     }
   }
@@ -1026,18 +1023,26 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
     },
   ];
 
+  const requireGroundedResult = async (promise: Promise<SparkResult>, provider: string) => {
+    const result = await promise;
+    if (!result.grounded || result.citations.length === 0) {
+      throw new Error(`${provider} returned no verifiable web citations.`);
+    }
+    return result;
+  };
+
   const searchChain = [
     {
       label: "Gemini Search",
       provider: "gemini" as const,
       configured: getGeminiApiKeys().length > 0,
-      run: (currentMessages) => callGemini(currentMessages, true),
+      run: (currentMessages) => requireGroundedResult(callGemini(currentMessages, true), "Gemini Search"),
     },
     {
       label: "Groq Search",
       provider: "groq" as const,
       configured: getGroqApiKeys().length > 0,
-      run: (currentMessages) => callGroq(currentMessages, "search"),
+      run: (currentMessages) => requireGroundedResult(callGroq(currentMessages, "search"), "Groq Search"),
     },
   ];
 
@@ -1223,7 +1228,7 @@ Deno.serve(async (req) => {
     const message = error instanceof Error ? error.message : "Unknown Spark AI error.";
     const status = /Authentication required/i.test(message) ? 401
       : /No valid Spark messages/i.test(message) ? 400
-      : /quota|rate limit|too many requests|retry in/i.test(message) ? 429
+      : isQuotaError(message) ? 429
       : /not set|no ai provider is configured/i.test(message) ? 500
       : 502;
 

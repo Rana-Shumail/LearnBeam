@@ -4,15 +4,26 @@ import {
   Bell, CalendarDays, Plus, X, Lightbulb, BookOpen, ChevronRight,
   GraduationCap, Sparkles, FileUp, User, CheckCircle2, Zap,
   HelpCircle, Brain, BookOpenCheck, ChevronDown, ChevronUp, LogOut,
+  MoreHorizontal, PencilLine, Trash2, Palette, Check,
 } from "lucide-react";
 import learnBeamLogo from "../../assets/861bd4bcf410ca26cefb8d6a2c416c8933fab508.png";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { useIsMobile } from "./ui/use-mobile";
 import { signOut, getUser, SUPABASE_CONFIGURED, getAvatarCache, setAvatarCache, subscribeToAvatar, resolvePreferredAvatarUrl, fetchRemoteAvatarPreference } from "../../lib/supabase";
-import { fetchCourses, fetchAssignments, fetchDocuments, fetchReminders, insertCourse, updateDocumentTextContent } from "../../lib/db";
+import {
+  fetchCourses,
+  fetchAssignments,
+  fetchDocuments,
+  fetchReminders,
+  insertCourse,
+  updateCourse,
+  deleteCourse,
+  updateDocumentTextContent,
+} from "../../lib/db";
 import {
   compareDueStrings,
   computeCourseSummary,
+  deleteStoredCourseData,
   formatDueForTimeline,
   isReminderUrgent,
   loadDashboardSuggestionState,
@@ -37,6 +48,10 @@ export type Course = {
 
 const COURSE_COLORS = ["#66B539","#3b82f6","#f59e0b","#8b5cf6","#ef4444","#06b6d4"];
 
+function normalizeCourseColor(value: string) {
+  return COURSE_COLORS.includes(value) ? value : COURSE_COLORS[0];
+}
+
 /** Legacy localStorage helpers — kept for CoursePage lookups by ID */
 export function loadCourses(): Course[] {
   try { return JSON.parse(localStorage.getItem("lb-courses") || "[]"); }
@@ -60,9 +75,10 @@ type AddCourseProgress = {
   detail: string;
 };
 
-function AddCourseModal({ onClose, onAdd }: {
+function AddCourseModal({ onClose, onAdd, initialColor }: {
   onClose: () => void;
   onAdd: (course: AddCourseInput, onProgress?: (progress: AddCourseProgress) => void) => Promise<void>;
+  initialColor: string;
 }) {
   const [step, setStep]         = useState<ModalStep>("course");
   const [code, setCode]         = useState("");
@@ -73,6 +89,7 @@ function AddCourseModal({ onClose, onAdd }: {
   const [scanDetail, setScanDetail] = useState("Setting up the new course before the syllabus is examined.");
   const [error, setError] = useState<string | null>(null);
   const colorIdx                = useRef(Math.floor(Math.random() * COURSE_COLORS.length)).current;
+  const [selectedColor, setSelectedColor] = useState(normalizeCourseColor(initialColor || COURSE_COLORS[colorIdx]));
 
   const finalize = async (syllabusFile?: File | null) => {
     setError(null);
@@ -80,7 +97,7 @@ function AddCourseModal({ onClose, onAdd }: {
       {
         code: code.trim(),
         name: name.trim(),
-        color: COURSE_COLORS[colorIdx],
+        color: selectedColor,
         syllabusFile,
       },
       (progress) => {
@@ -168,6 +185,30 @@ function AddCourseModal({ onClose, onAdd }: {
                   onBlur={e=>{(e.target as HTMLInputElement).style.borderColor="var(--border)";(e.target as HTMLInputElement).style.boxShadow="none";}}
                   autoFocus
                 />
+              </div>
+              <div>
+                <label style={{fontFamily:F.body, fontSize:"0.8rem", fontWeight:600, color:"var(--text-secondary)", display:"block", marginBottom:"9px"}}>
+                  Course Color
+                </label>
+                <div style={{display:"flex", alignItems:"center", gap:"9px", flexWrap:"wrap"}}>
+                  {COURSE_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      aria-label={`Use ${color} for this course`}
+                      onClick={() => setSelectedColor(color)}
+                      style={{
+                        width:"31px", height:"31px", borderRadius:"50%", background:color,
+                        border:selectedColor === color ? "3px solid var(--bg-surface)" : "2px solid transparent",
+                        outline:selectedColor === color ? `2px solid ${color}` : "none",
+                        display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+                        boxShadow:selectedColor === color ? `0 6px 16px ${color}55` : "none",
+                      }}
+                    >
+                      {selectedColor === color && <Check size={14} color="#fff" strokeWidth={3}/>}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <label style={{fontFamily:F.body, fontSize:"0.8rem", fontWeight:600, color:"var(--text-secondary)", display:"block", marginBottom:"7px"}}>
@@ -308,6 +349,96 @@ function AddCourseModal({ onClose, onAdd }: {
         </div>
       </div>
       <style>{`@keyframes modalIn{from{opacity:0;transform:scale(0.92) translateY(16px)}to{opacity:1;transform:scale(1) translateY(0)}}`}</style>
+    </div>
+  );
+}
+
+function EditCourseModal({ course, error, saving, onClose, onSave }: {
+  course: Course;
+  error: string | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (updates: Pick<Course, "code" | "name" | "color">) => Promise<void>;
+}) {
+  const [code, setCode] = useState(course.code);
+  const [name, setName] = useState(course.name);
+  const [color, setColor] = useState(normalizeCourseColor(course.color));
+  const canSave = Boolean(code.trim()) && !saving;
+
+  return (
+    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="polished-modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title">
+        <div className="modal-heading-row">
+          <div>
+            <p className="eyebrow">Course settings</p>
+            <h3 id="edit-course-title">Edit course</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close edit course"><X size={18}/></button>
+        </div>
+        <div className="modal-body-stack">
+          <label className="field-label">
+            Course code
+            <input className="polished-input" value={code} onChange={(event) => setCode(event.target.value)} autoFocus/>
+          </label>
+          <label className="field-label">
+            Course name
+            <input className="polished-input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Optional course name"/>
+          </label>
+          <div>
+            <span className="field-label">Tile color</span>
+            <div className="course-color-grid">
+              {COURSE_COLORS.map((choice) => (
+                <button
+                  key={choice}
+                  type="button"
+                  className={`course-color-choice${color === choice ? " selected" : ""}`}
+                  style={{background:choice, color:choice, boxShadow:color === choice ? `0 8px 20px ${choice}55` : undefined}}
+                  onClick={() => setColor(choice)}
+                  aria-label={`Choose ${choice}`}
+                >
+                  {color === choice && <Check size={15} color="#fff" strokeWidth={3}/>}
+                </button>
+              ))}
+            </div>
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          <div className="modal-actions">
+            <button className="secondary-action" onClick={onClose} disabled={saving}>Cancel</button>
+            <button
+              className="primary-action"
+              disabled={!canSave}
+              onClick={() => void onSave({ code: code.trim(), name: name.trim(), color })}
+            >
+              {saving ? "Saving..." : "Save changes"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteCourseModal({ course, error, deleting, onClose, onDelete }: {
+  course: Course;
+  error: string | null;
+  deleting: boolean;
+  onClose: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="polished-modal compact" role="alertdialog" aria-modal="true" aria-labelledby="delete-course-title">
+        <div className="danger-icon"><Trash2 size={20}/></div>
+        <h3 id="delete-course-title">Delete {course.code}?</h3>
+        <p className="modal-copy">This removes the course, its uploaded documents, assignments, reminders, and saved study plan. This action cannot be undone.</p>
+        {error && <p className="form-error">{error}</p>}
+        <div className="modal-actions">
+          <button className="secondary-action" onClick={onClose} disabled={deleting}>Keep course</button>
+          <button className="danger-action" onClick={() => void onDelete()} disabled={deleting}>
+            {deleting ? "Deleting..." : "Delete course"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -474,16 +605,24 @@ export function Dashboard() {
   const [userName, setUserName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => getAvatarCache());
   const [showModal, setShowModal] = useState(false);
+  const [courseMenuId, setCourseMenuId] = useState<string | null>(null);
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [deletingCourse, setDeletingCourse] = useState<Course | null>(null);
+  const [courseMutationBusy, setCourseMutationBusy] = useState(false);
+  const [courseMutationError, setCourseMutationError] = useState<string | null>(null);
   const [bellOpen, setBellOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const navigate                = useNavigate();
   const bellRef                 = useRef<HTMLDivElement>(null);
   const profileRef              = useRef<HTMLDivElement>(null);
+  const courseMenuRef           = useRef<HTMLDivElement>(null);
   const hasUpcomingReminders    = courses.some((course) => {
     const stored = loadStoredCourseData(course.id);
     return mergeCourseReminders(stored.assignments, stored.reminders).length > 0;
   });
+  const nextCourseColor = COURSE_COLORS.find((color) => !courses.some((course) => course.color === color))
+    ?? COURSE_COLORS[courses.length % COURSE_COLORS.length];
 
   // Load courses — from Supabase if configured, else from localStorage
   useEffect(() => {
@@ -737,6 +876,16 @@ export function Dashboard() {
     return () => document.removeEventListener("mousedown", handle);
   }, [profileOpen]);
 
+  useEffect(() => {
+    function handle(event: MouseEvent) {
+      if (courseMenuRef.current && !courseMenuRef.current.contains(event.target as Node)) {
+        setCourseMenuId(null);
+      }
+    }
+    if (courseMenuId) document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [courseMenuId]);
+
   const handleAddCourse = async (
     data: AddCourseInput,
     onProgress?: (progress: AddCourseProgress) => void,
@@ -792,6 +941,71 @@ export function Dashboard() {
     }
   };
 
+  const persistCourseUpdate = async (
+    course: Course,
+    updates: Pick<Course, "code" | "name" | "color">,
+  ) => {
+    if (!updates.code.trim()) return;
+    setCourseMutationBusy(true);
+    setCourseMutationError(null);
+    try {
+      if (SUPABASE_CONFIGURED) {
+        const saved = await updateCourse(course.id, {
+          code: updates.code.trim(),
+          name: updates.name.trim() || null,
+          color: normalizeCourseColor(updates.color),
+        });
+        if (!saved) throw new Error("LearnBeam could not save the course changes.");
+      }
+
+      setCourses((current) => {
+        const next = current.map((item) => item.id === course.id ? {
+          ...item,
+          code: updates.code.trim(),
+          name: updates.name.trim(),
+          color: normalizeCourseColor(updates.color),
+        } : item);
+        saveCourses(next);
+        return next;
+      });
+      setEditingCourse(null);
+      setCourseMenuId(null);
+    } catch (error) {
+      setCourseMutationError(error instanceof Error ? error.message : "The course changes could not be saved.");
+    } finally {
+      setCourseMutationBusy(false);
+    }
+  };
+
+  const persistCourseColor = async (course: Course, color: string) => {
+    await persistCourseUpdate(course, { code: course.code, name: course.name, color });
+  };
+
+  const handleDeleteCourse = async (course: Course) => {
+    setCourseMutationBusy(true);
+    setCourseMutationError(null);
+    try {
+      if (SUPABASE_CONFIGURED) {
+        const deleted = await deleteCourse(course.id);
+        if (!deleted) throw new Error("LearnBeam could not delete this course. Please try again.");
+      }
+      deleteStoredCourseData(course.id);
+      saveDashboardSuggestionState(null);
+      setAiSuggestions([]);
+      setCourses((current) => {
+        const next = current.filter((item) => item.id !== course.id);
+        saveCourses(next);
+        return next;
+      });
+      setDeletingCourse(null);
+      setCourseMenuId(null);
+    } catch (error) {
+      setCourseMutationError(error instanceof Error ? error.message : "The course could not be deleted.");
+    } finally {
+      setCourseMutationBusy(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await signOut();
     navigate("/");
@@ -803,10 +1017,10 @@ export function Dashboard() {
   const dateStr = now.toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
 
   return (
-    <div style={{display:"flex", flexDirection:"column", minHeight:"100vh", width:"100%", background:"var(--bg-primary)", color:"var(--foreground)", fontFamily:F.body}}>
+    <div className="app-page" style={{display:"flex", flexDirection:"column", minHeight:"100vh", width:"100%", background:"var(--bg-primary)", color:"var(--foreground)", fontFamily:F.body}}>
 
       {/* ══ TOP NAV ══ */}
-      <header style={{
+      <header className="app-header" style={{
         minHeight:isMobile ? "72px" : "82px", display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:isMobile ? "10px 14px" : "0 32px", background:"var(--bg-surface)", borderBottom:"1px solid var(--border)",
         position:"sticky", top:0, zIndex:20, flexShrink:0,
@@ -1012,15 +1226,57 @@ export function Dashboard() {
                 <div
                   key={c.id}
                   onClick={()=>navigate(`/course/${c.id}`)}
+                  className="course-tile"
                   style={{
-                    background:"var(--bg-surface)", border:"1px solid var(--border)",
+                    background:`linear-gradient(145deg, ${c.color}13 0%, var(--bg-surface) 46%, var(--bg-surface) 100%)`, border:`1px solid ${c.color}30`,
                     borderRadius:"16px", padding:isMobile ? "18px" : "22px", cursor:"pointer",
-                    transition:"box-shadow 0.2s, transform 0.18s", position:"relative", overflow:"hidden",
+                    transition:"box-shadow 0.2s, transform 0.18s", position:"relative", overflow:"visible",
                   }}
                   onMouseEnter={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="0 14px 36px rgba(0,0,0,0.12)";el.style.transform="translateY(-3px)";}}
                   onMouseLeave={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="none";el.style.transform="translateY(0)";}}
                 >
-                  <div style={{position:"absolute", top:0, left:0, right:0, height:"3px", background:c.color, borderRadius:"16px 16px 0 0"}}/>
+                  <div style={{position:"absolute", top:0, left:0, right:0, height:"4px", background:`linear-gradient(90deg, ${c.color}, ${c.color}99)`, borderRadius:"16px 16px 0 0"}}/>
+                  <div
+                    ref={courseMenuId === c.id ? courseMenuRef : undefined}
+                    style={{position:"absolute", top:"12px", right:"12px", zIndex:4}}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      className="course-menu-trigger"
+                      aria-label={`Course options for ${c.code}`}
+                      aria-expanded={courseMenuId === c.id}
+                      onClick={() => setCourseMenuId((current) => current === c.id ? null : c.id)}
+                    >
+                      <MoreHorizontal size={18}/>
+                    </button>
+                    {courseMenuId === c.id && (
+                      <div className="course-card-menu">
+                        <button onClick={() => { setCourseMutationError(null); setEditingCourse(c); setCourseMenuId(null); }}>
+                          <PencilLine size={15}/> Edit course
+                        </button>
+                        <div className="course-menu-colors">
+                          <span><Palette size={14}/> Tile color</span>
+                          <div>
+                            {COURSE_COLORS.map((color) => (
+                              <button
+                                key={color}
+                                className={`mini-color-choice${c.color === color ? " selected" : ""}`}
+                                style={{background:color, color}}
+                                onClick={() => void persistCourseColor(c, color)}
+                                aria-label={`Change ${c.code} color to ${color}`}
+                              >
+                                {c.color === color && <Check size={10} color="#fff" strokeWidth={3}/>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="menu-divider"/>
+                        <button className="delete-menu-item" onClick={() => { setCourseMutationError(null); setDeletingCourse(c); setCourseMenuId(null); }}>
+                          <Trash2 size={15}/> Delete course
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div style={{display:"flex", alignItems:"center", gap:"12px", marginBottom:"18px"}}>
                     <div style={{width:"44px", height:"44px", borderRadius:"12px", background:`${c.color}1a`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
                       <GraduationCap size={20} style={{color:c.color}}/>
@@ -1217,7 +1473,25 @@ export function Dashboard() {
       </main>
 
       {/* ══ ADD COURSE MODAL ══ */}
-      {showModal && <AddCourseModal onClose={()=>setShowModal(false)} onAdd={handleAddCourse}/>}
+      {showModal && <AddCourseModal onClose={()=>setShowModal(false)} onAdd={handleAddCourse} initialColor={nextCourseColor}/>}
+      {editingCourse && (
+        <EditCourseModal
+          course={editingCourse}
+          error={courseMutationError}
+          saving={courseMutationBusy}
+          onClose={() => { if (!courseMutationBusy) { setEditingCourse(null); setCourseMutationError(null); } }}
+          onSave={(updates) => persistCourseUpdate(editingCourse, updates)}
+        />
+      )}
+      {deletingCourse && (
+        <DeleteCourseModal
+          course={deletingCourse}
+          error={courseMutationError}
+          deleting={courseMutationBusy}
+          onClose={() => { if (!courseMutationBusy) { setDeletingCourse(null); setCourseMutationError(null); } }}
+          onDelete={() => handleDeleteCourse(deletingCourse)}
+        />
+      )}
 
       {/* ══ HELP ? BUTTON + PANEL ══ */}
       <div style={{position:"fixed", bottom:isMobile ? "18px" : "22px", right:isMobile ? "14px" : "22px", zIndex:100, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:"10px"}}>

@@ -303,10 +303,10 @@ export function ProfilePage() {
   ];
 
   return (
-    <div style={{display:"flex", flexDirection:"column", minHeight:"100vh", background:"var(--bg-primary)", color:"var(--foreground)", fontFamily:F.body}}>
+    <div className="app-page" style={{display:"flex", flexDirection:"column", minHeight:"100vh", background:"var(--bg-primary)", color:"var(--foreground)", fontFamily:F.body}}>
 
       {/* ══ TOP NAV ══ */}
-      <header style={{
+      <header className="app-header" style={{
         minHeight:isMobile ? "72px" : "72px", display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:isMobile ? "10px 14px" : "0 32px", background:"var(--bg-surface)", borderBottom:"1px solid var(--border)",
         position:"sticky", top:0, zIndex:20, flexShrink:0,

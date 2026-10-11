@@ -17,6 +17,9 @@ export function ThemeSwitcher() {
           key={t.value}
           onClick={() => setTheme(t.value)}
           className={`theme-btn ${theme === t.value ? "active" : ""}`}
+          aria-label={`${t.label} theme`}
+          aria-pressed={theme === t.value}
+          title={`${t.label} theme`}
         >
           {t.icon}
           <span>{t.label}</span>

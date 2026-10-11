@@ -9,8 +9,8 @@ export const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 // app never crashes on import. All DB calls simply return errors which
 // the helpers below handle gracefully.
 export const supabase = createClient(
-  SUPABASE_URL      ?? "https://placeholder.supabase.co",
-  SUPABASE_ANON_KEY ?? "placeholder-key",
+  SUPABASE_URL      || "https://placeholder.supabase.co",
+  SUPABASE_ANON_KEY || "placeholder-key",
 );
 
 /* ── Sign Up ──────────────────────────────────────── */

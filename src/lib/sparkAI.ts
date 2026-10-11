@@ -164,10 +164,13 @@ async function invokeEdgeFunction(messages: SparkAIMessage[], options?: SparkAIO
   if (!url) throw new Error("Spark AI is missing its function URL. Set VITE_SUPABASE_URL or VITE_SPARK_BASE_URL.");
 
   let response: Response;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 55_000);
   try {
     response = await fetch(url, {
       method: "POST",
       headers: await buildSparkHeaders(),
+      signal: controller.signal,
       body: JSON.stringify({
         messages,
         useSearch: Boolean(options?.useSearch),
@@ -175,8 +178,12 @@ async function invokeEdgeFunction(messages: SparkAIMessage[], options?: SparkAIO
       }),
     });
   } catch (error) {
-    const reason = error instanceof Error ? error.message.trim() : "Network request failed.";
+    const reason = error instanceof DOMException && error.name === "AbortError"
+      ? "Spark took too long to respond."
+      : error instanceof Error ? error.message.trim() : "Network request failed.";
     throw new Error(`${reason} Could not reach the spark-ai Edge Function at ${url}.`);
+  } finally {
+    window.clearTimeout(timeout);
   }
 
   if (!response.ok) throw new Error(await describeSparkFailure(response));
@@ -302,17 +309,9 @@ async function callSparkAI(messages: SparkAIMessage[], options?: SparkAIOptions)
     } catch (edgeError) {
       const message = edgeError instanceof Error ? edgeError.message : String(edgeError);
 
-      if (isQuotaError(message)) {
-        // The Edge Function now owns provider fallback. For quota/rate-limit issues,
-        // keep the same task/search mode and retry once after the suggested cooldown.
-        const retrySeconds = describeRetryDelay(message);
-        const waitMs = retrySeconds ? retrySeconds * 1000 + 800 : 0;
-        if (waitMs > 0 && waitMs <= MAX_QUOTA_WAIT_MS) {
-          await sleep(waitMs);
-          return await invokeEdgeFunction(messages, options);
-        }
-        throw edgeError;
-      }
+      // The Edge Function already tried every configured provider. Do not freeze
+      // the chat by immediately repeating the same exhausted chain in-browser.
+      if (isQuotaError(message)) throw edgeError;
 
       // Non-quota Edge Function failure — only fall back to direct Gemini when
       // the function is genuinely not deployed (not a transient error).

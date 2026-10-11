@@ -165,7 +165,7 @@ export function AuthPage() {
 
   return (
     <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12"
+      className="app-page relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12"
       style={{ color: "var(--foreground)" }}
     >
       {/* Background is absolutely fixed — never moves */}

@@ -498,16 +498,17 @@ export function CoursePage() {
   );
 
   const buildSparkFailureMessage = (errorMessage: string) => {
+    console.error("Spark request failed:", errorMessage);
     if (/quota|rate limit|retry in/i.test(errorMessage)) {
       return {
         text: "Spark is temporarily busy right now.",
-        note: "Please try again in a few seconds. Spark retried across its available providers, but they were still cooling down.",
+        note: "Please try again shortly. Spark checked its available providers, but none could complete this request yet.",
       };
     }
 
     return {
       text: "I couldn't reach Spark AI yet.",
-      note: `The "${SPARK_FUNCTION_NAME}" Supabase Edge Function is not responding. ${errorMessage} Make sure Supabase is configured and its provider secrets are set correctly.`,
+      note: `The "${SPARK_FUNCTION_NAME}" service could not complete this request. Please try again shortly.`,
     };
   };
 
@@ -658,7 +659,7 @@ export function CoursePage() {
       const result = await streamWithSparkAI(
         [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: msg }],
         (partial) => { setMessages(prev => prev.map(m => m.id === streamId ? { ...m, text: partial } : m)); },
-        { useSearch: sparkMode === "global", task: sparkMode === "global" ? "general-chat" : "course-chat" },
+        { useSearch: false, task: sparkMode === "global" ? "general-chat" : "course-chat" },
       );
       setMessages(prev => prev.map(m => m.id === streamId ? {
         ...m,
@@ -881,10 +882,10 @@ export function CoursePage() {
 
   // ── Render ──
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: isMobile ? "auto" : "100vh", width: "100%", background: "var(--bg-primary)", color: "var(--foreground)", fontFamily: F.body, overflow: isMobile ? "visible" : "hidden" }}>
+    <div className="app-page" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: isMobile ? "auto" : "100vh", width: "100%", background: "var(--bg-primary)", color: "var(--foreground)", fontFamily: F.body, overflow: isMobile ? "visible" : "hidden" }}>
 
       {/* ══ TOP NAV ══ */}
-      <header style={{ minHeight: isMobile ? "74px" : "82px", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "10px 28px", background: "var(--bg-surface)", borderBottom: "1px solid var(--border)", flexShrink: 0, boxShadow: "0 1px 14px rgba(0,0,0,0.06)", zIndex: 20, gap: isMobile ? "12px" : "14px", flexWrap: "wrap" }}>
+      <header className="app-header" style={{ minHeight: isMobile ? "74px" : "82px", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "10px 28px", background: "var(--bg-surface)", borderBottom: "1px solid var(--border)", flexShrink: 0, boxShadow: "0 1px 14px rgba(0,0,0,0.06)", zIndex: 20, gap: isMobile ? "12px" : "14px", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? "10px" : "14px", minWidth: 0, flex: isMobile ? "1 1 100%" : "1 1 420px" }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px", flexShrink: 0, cursor: "pointer" }} onClick={() => navigate("/dashboard")}>
             <img src={learnBeamLogo} alt="LearnBeam" style={{ height: isMobile ? "42px" : "52px", width: isMobile ? "42px" : "52px", objectFit: "contain", filter: "drop-shadow(0 3px 10px rgba(0,0,0,0.15))" }}/>
@@ -943,7 +944,7 @@ export function CoursePage() {
       {/* ══ BODY ══ */}
       <div style={{ display: "flex", flex: 1, overflow: isMobile ? "visible" : "hidden", minHeight: 0 }}>
         <main style={{ flex: 1, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "20px 14px 160px" : "26px 30px 200px", minWidth: 0 }}>
-          <div style={{ maxWidth: activeTab === "study-planner" ? "1480px" : "860px", margin: "0 auto", width: "100%" }}>{renderTab()}</div>
+          <div key={activeTab} className="content-slide" style={{ maxWidth: activeTab === "study-planner" ? "1480px" : "860px", margin: "0 auto", width: "100%" }}>{renderTab()}</div>
         </main>
 
         {chatOpen && chatMaximized && (
