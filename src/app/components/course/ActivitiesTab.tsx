@@ -17,11 +17,12 @@ import { F, card, sHead, EmptyState, type Doc } from "./types.tsx";
 
 /* ── Focus Mode Overlay ──────────────────────────────── */
 export function FocusMode({
-  courseCode, courseName, onExit,
+  courseCode, courseName, onExit, onSessionComplete,
 }: {
   courseCode: string;
   courseName: string;
   onExit: () => void;
+  onSessionComplete: (minutes: number) => void;
 }) {
   const [phase, setPhase]       = useState<"study" | "break">("study");
   const [running, setRunning]   = useState(false);
@@ -41,14 +42,14 @@ export function FocusMode({
       setTimeLeft(t => {
         if (t <= 1) {
           setRunning(false);
-          if (phase === "study") { setSessions(s => s + 1); setPhase("break"); return 5 * 60; }
+          if (phase === "study") { setSessions(s => s + 1); onSessionComplete(25); setPhase("break"); return 5 * 60; }
           else { setPhase("study"); return 25 * 60; }
         }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [running, phase]);
+  }, [running, phase, onSessionComplete]);
 
   const reset = () => { setRunning(false); setTimeLeft(phase === "study" ? 25 * 60 : 5 * 60); };
   const mins  = Math.floor(timeLeft / 60).toString().padStart(2, "0");
@@ -125,17 +126,19 @@ export function FocusMode({
 type ActivityView = "grid" | "quiz" | "notes";
 
 export function ActivitiesTab({
-  courseCode, courseId, docs, onFocusMode, documentsSyncing,
+  courseCode, courseId, docs, onFocusMode, onQuizComplete, documentsSyncing,
 }: {
   courseCode: string;
   courseId: string;
   docs: Doc[];
   onFocusMode: () => void;
+  onQuizComplete: (attempt: { quizId: string; topic: string; correct: number; total: number }) => void;
   documentsSyncing: boolean;
 }) {
   const [view, setView]         = useState<ActivityView>("grid");
   const [quizIdx, setQuizIdx]   = useState(0);
   const [quizScore, setQuizScore] = useState({ correct: 0, total: 0 });
+  const [quizRunRecorded, setQuizRunRecorded] = useState(false);
   const [answered, setAnswered] = useState<number | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
@@ -246,6 +249,7 @@ export function ActivitiesTab({
       setAnswered(null);
       setQuizIdx(0);
       setQuizScore({ correct: 0, total: 0 });
+      setQuizRunRecorded(false);
     } catch (error) {
       setQuizError(error instanceof Error ? error.message : "Quiz generation failed.");
     } finally {
@@ -259,13 +263,22 @@ export function ActivitiesTab({
     setAnswered(null);
     setQuizIdx(0);
     setQuizScore({ correct: 0, total: 0 });
+    setQuizRunRecorded(false);
     setQuizError(null);
   };
 
   const handleAnswer = (idx: number) => {
     if (answered !== null || !current) return;
     setAnswered(idx);
-    setQuizScore(s => ({ correct: s.correct + (idx === current.correctIndex ? 1 : 0), total: s.total + 1 }));
+    const nextScore = {
+      correct: quizScore.correct + (idx === current.correctIndex ? 1 : 0),
+      total: quizScore.total + 1,
+    };
+    setQuizScore(nextScore);
+    if (!quizRunRecorded && activeQuiz && nextScore.total >= activeQuiz.questions.length) {
+      setQuizRunRecorded(true);
+      onQuizComplete({ quizId: activeQuiz.id, topic: activeQuiz.topic, ...nextScore });
+    }
   };
 
   const nextQuestion = () => {

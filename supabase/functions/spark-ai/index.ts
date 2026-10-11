@@ -18,7 +18,8 @@ type IncomingBody = {
   task?: unknown;
 };
 
-type SparkProvider = "gemini" | "cerebras" | "groq";
+type SparkProvider = "gemini" | "cerebras" | "groq" | "nvidia";
+type SparkSearchProvider = "tinyfish" | "gemini" | "groq";
 
 type SparkTask =
   | "course-chat"
@@ -26,6 +27,7 @@ type SparkTask =
   | "quiz"
   | "course-suggestions"
   | "dashboard-suggestions"
+  | "study-planner"
   | "fact-check"
   | "syllabus-analysis"
   | "generic";
@@ -42,6 +44,7 @@ type SparkResult = {
   grounded: boolean;
   model: string;
   provider: SparkProvider;
+  searchProvider?: SparkSearchProvider | null;
 };
 
 type GeminiResponse = {
@@ -91,10 +94,37 @@ type ProviderAttempt = {
   run: (messages: SparkAIMessage[]) => Promise<SparkResult>;
 };
 
+function parseApiKeys(...envVarNames: string[]): string[] {
+  const keys: string[] = [];
+  for (const name of envVarNames) {
+    const raw = Deno.env.get(name)?.trim();
+    if (!raw) continue;
+    for (const part of raw.split(/[\s,]+/)) {
+      const clean = part.trim();
+      if (clean && !keys.includes(clean)) {
+        keys.push(clean);
+      }
+    }
+  }
+  return keys;
+}
+
+function getGeminiApiKeys(): string[] {
+  return parseApiKeys("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_FALLBACK_API_KEY");
+}
+
+function getGroqApiKeys(): string[] {
+  return parseApiKeys("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_FALLBACK_API_KEY");
+}
+
+function getCerebrasApiKeys(): string[] {
+  return parseApiKeys("CEREBRAS_API_KEY", "CEREBRAS_API_KEY_2", "CEREBRAS_FALLBACK_API_KEY");
+}
+
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")?.trim();
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash-lite";
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-3.8-flash";
 // Fallback must be a genuinely different model so quota/model errors on primary have a real escape path.
-const GEMINI_FALLBACK_MODEL = Deno.env.get("GEMINI_FALLBACK_MODEL")?.trim() || "gemini-2.0-flash";
+const GEMINI_FALLBACK_MODEL = Deno.env.get("GEMINI_FALLBACK_MODEL")?.trim() || "gemini-2.5-flash-lite";
 
 const CEREBRAS_API_KEY = Deno.env.get("CEREBRAS_API_KEY")?.trim();
 // "gpt-oss-120b" is a Groq model name — the correct Cerebras model names use the llama naming scheme.
@@ -106,6 +136,14 @@ const GROQ_MODEL = Deno.env.get("GROQ_MODEL")?.trim() || "openai/gpt-oss-20b";
 const GROQ_FALLBACK_MODEL = Deno.env.get("GROQ_FALLBACK_MODEL")?.trim() || "openai/gpt-oss-120b";
 const GROQ_SEARCH_MODEL = Deno.env.get("GROQ_SEARCH_MODEL")?.trim() || "groq/compound-mini";
 const GROQ_VISION_MODEL = Deno.env.get("GROQ_VISION_MODEL")?.trim() || "meta-llama/llama-4-scout-17b-16e-instruct";
+
+const NVIDIA_API_KEY = Deno.env.get("NVIDIA_API_KEY")?.trim();
+const NVIDIA_MODEL = Deno.env.get("NVIDIA_MODEL")?.trim() || "nvidia/nemotron-3.5-lightning-30b-a3b";
+const NVIDIA_FALLBACK_MODEL = Deno.env.get("NVIDIA_FALLBACK_MODEL")?.trim() || "nvidia/nemotron-3-super-120b-a12b";
+
+const TINYFISH_API_KEY = Deno.env.get("TINYFISH_API_KEY")?.trim();
+const TINYFISH_SEARCH_ENDPOINT = Deno.env.get("TINYFISH_SEARCH_ENDPOINT")?.trim() || "https://api.search.tinyfish.ai";
+const TINYFISH_FETCH_ENDPOINT = Deno.env.get("TINYFISH_FETCH_ENDPOINT")?.trim() || "https://api.fetch.tinyfish.ai";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")?.trim();
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")?.trim();
@@ -156,6 +194,7 @@ function normalizeTask(task: unknown): SparkTask {
     task === "quiz" ||
     task === "course-suggestions" ||
     task === "dashboard-suggestions" ||
+    task === "study-planner" ||
     task === "fact-check" ||
     task === "syllabus-analysis" ||
     task === "generic"
@@ -360,7 +399,7 @@ function extractOpenAICompatibleCitations(payload: OpenAICompatibleResponse | nu
 }
 
 function isQuotaError(message: string) {
-  return /quota|rate limit|too many requests|retry in/i.test(message);
+  return /quota|rate limit|too many requests|retry in|high demand|temporarily unavailable|overloaded|service unavailable|spikes in demand|status 503|status 500/i.test(message);
 }
 
 function isRecoverableModelError(message: string) {
@@ -369,6 +408,194 @@ function isRecoverableModelError(message: string) {
 
 function describeProviderError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function latestUserPrompt(messages: SparkAIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return "";
+}
+
+function shouldUseTinyFishEvidence(messages: SparkAIMessage[], task: SparkTask, useSearch = false) {
+  if (!TINYFISH_API_KEY) return false;
+  if (!useSearch && task !== "fact-check") return false;
+  if (hasImages(messages)) return false;
+
+  const prompt = latestUserPrompt(messages).toLowerCase();
+  if (!prompt) return false;
+
+  if (task === "fact-check") return true;
+  if (/^(hi|hello|hey|thanks|thank you|bye|goodbye)[!. ]*$/.test(prompt)) return false;
+  if (/\b(joke|story|poem|song|email|draft|rewrite|creative)\b/.test(prompt)) return false;
+  return prompt.length >= 8;
+}
+
+type TinyFishSearchHit = {
+  title: string;
+  url: string;
+  snippet: string;
+};
+
+type TinyFishFetchedPage = {
+  title: string;
+  url: string;
+  text: string;
+};
+
+function normalizeTinyFishSearchHits(payload: unknown): TinyFishSearchHit[] {
+  if (!payload || typeof payload !== "object") return [];
+  const record = payload as Record<string, unknown>;
+  if (!Array.isArray(record.results)) return [];
+
+  const seen = new Set<string>();
+  return record.results.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const result = item as Record<string, unknown>;
+    const url = typeof result.url === "string" && result.url.trim() ? result.url.trim() : null;
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    return [{
+      title: typeof result.title === "string" && result.title.trim() ? result.title.trim() : url,
+      url,
+      snippet: typeof result.snippet === "string" ? result.snippet.trim() : "",
+    }];
+  });
+}
+
+function normalizeTinyFishFetchedPages(payload: unknown): TinyFishFetchedPage[] {
+  if (!payload || typeof payload !== "object") return [];
+  const record = payload as Record<string, unknown>;
+  if (!Array.isArray(record.results)) return [];
+
+  return record.results.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const result = item as Record<string, unknown>;
+    const url = typeof result.final_url === "string" && result.final_url.trim()
+      ? result.final_url.trim()
+      : typeof result.url === "string" && result.url.trim()
+        ? result.url.trim()
+        : null;
+    const text = typeof result.text === "string" && result.text.trim() ? result.text.trim() : "";
+    if (!url || !text) return [];
+    return [{
+      title: typeof result.title === "string" && result.title.trim() ? result.title.trim() : url,
+      url,
+      text,
+    }];
+  });
+}
+
+async function callTinyFishSearch(query: string, purpose: string) {
+  if (!TINYFISH_API_KEY) {
+    throw new Error("TINYFISH_API_KEY is not set for the spark-ai Edge Function.");
+  }
+
+  const endpoint = new URL(TINYFISH_SEARCH_ENDPOINT);
+  endpoint.searchParams.set("query", query);
+  endpoint.searchParams.set("purpose", purpose);
+  endpoint.searchParams.set("location", "US");
+  endpoint.searchParams.set("language", "en");
+
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      "X-API-Key": TINYFISH_API_KEY,
+    },
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const base = payload && typeof payload === "object" && typeof (payload as Record<string, unknown>).message === "string"
+      ? (payload as Record<string, unknown>).message as string
+      : `TinyFish search failed with status ${response.status}.`;
+    throw new Error(base);
+  }
+
+  const results = normalizeTinyFishSearchHits(payload).slice(0, 4);
+  if (results.length === 0) {
+    throw new Error("TinyFish search returned no useful web results.");
+  }
+  return results;
+}
+
+async function callTinyFishFetch(urls: string[], purpose: string) {
+  if (!TINYFISH_API_KEY) {
+    throw new Error("TINYFISH_API_KEY is not set for the spark-ai Edge Function.");
+  }
+
+  const response = await fetch(TINYFISH_FETCH_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "X-API-Key": TINYFISH_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      urls,
+      purpose,
+      format: "markdown",
+      ttl: 3600,
+      per_url_timeout_ms: 45000,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const base = payload && typeof payload === "object" && typeof (payload as Record<string, unknown>).message === "string"
+      ? (payload as Record<string, unknown>).message as string
+      : `TinyFish fetch failed with status ${response.status}.`;
+    throw new Error(base);
+  }
+
+  return normalizeTinyFishFetchedPages(payload);
+}
+
+async function buildTinyFishAugmentedMessages(messages: SparkAIMessage[], task: SparkTask) {
+  const query = latestUserPrompt(messages).slice(0, 500);
+  const purpose = task === "fact-check"
+    ? "Retrieve reliable web evidence to verify factual claims from a student document."
+    : "Retrieve high-signal web evidence to answer a student's question accurately.";
+
+  const searchResults = await callTinyFishSearch(query, purpose);
+  const fetchedPages = await callTinyFishFetch(searchResults.slice(0, 3).map((result) => result.url), purpose);
+
+  const evidenceSections = searchResults.slice(0, 3).map((result, index) => {
+    const fetched = fetchedPages.find((page) => page.url === result.url);
+    const body = fetched?.text ? fetched.text.slice(0, 1800) : result.snippet;
+    return [
+      `Web Source ${index + 1}: ${result.title}`,
+      `URL: ${result.url}`,
+      result.snippet ? `Snippet: ${result.snippet}` : null,
+      body ? `Extracted content:\n${body}` : null,
+    ].filter(Boolean).join("\n");
+  });
+
+  if (evidenceSections.length === 0) {
+    throw new Error("TinyFish did not return usable evidence sections.");
+  }
+
+  return {
+    citations: searchResults.map((result) => ({ title: result.title, url: result.url })),
+    messages: [
+      {
+        role: "system" as const,
+        content: [
+          "You have verified web evidence gathered by TinyFish.",
+          task === "fact-check"
+            ? "Use the evidence below to verify claims carefully. If the evidence is mixed or incomplete, say so plainly."
+            : "Use the evidence below when it helps answer accurately. If the evidence is mixed or incomplete, say so plainly.",
+          "Prefer the evidence below over unsupported assumptions.",
+          "",
+          evidenceSections.join("\n\n---\n\n"),
+        ].join("\n"),
+        images: [],
+      },
+      ...messages,
+    ],
+  };
 }
 
 function prependHandoffInstruction(messages: SparkAIMessage[], attemptedProviders: string[]) {
@@ -384,8 +611,9 @@ function prependHandoffInstruction(messages: SparkAIMessage[], attemptedProvider
   ];
 }
 
-async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSearch = false): Promise<SparkResult> {
-  if (!GEMINI_API_KEY) {
+async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSearch = false, apiKey?: string): Promise<SparkResult> {
+  const key = apiKey || GEMINI_API_KEY;
+  if (!key) {
     throw new Error("GEMINI_API_KEY is not set for the spark-ai Edge Function.");
   }
 
@@ -393,7 +621,7 @@ async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSear
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      "x-goog-api-key": GEMINI_API_KEY,
+      "x-goog-api-key": key,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(buildGeminiPayload(messages, useSearch)),
@@ -425,14 +653,29 @@ async function callGeminiOnce(model: string, messages: SparkAIMessage[], useSear
 }
 
 async function callGemini(messages: SparkAIMessage[], useSearch = false) {
-  try {
-    return await callGeminiOnce(GEMINI_MODEL, messages, useSearch);
-  } catch (error) {
-    const message = describeProviderError(error);
-    if (!isQuotaError(message) && !isRecoverableModelError(message)) throw error;
-    if (!GEMINI_FALLBACK_MODEL || GEMINI_FALLBACK_MODEL === GEMINI_MODEL) throw error;
-    return callGeminiOnce(GEMINI_FALLBACK_MODEL, messages, useSearch);
+  const keys = getGeminiApiKeys();
+  if (keys.length === 0) {
+    throw new Error("GEMINI_API_KEY is not set for the spark-ai Edge Function.");
   }
+
+  const models = [GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i);
+  let lastError: unknown = null;
+
+  for (const apiKey of keys) {
+    for (const model of models) {
+      try {
+        return await callGeminiOnce(model, messages, useSearch, apiKey);
+      } catch (error) {
+        lastError = error;
+        const message = describeProviderError(error);
+        if (!isQuotaError(message) && !isRecoverableModelError(message)) {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError ?? new Error("All Gemini API keys and models exhausted.");
 }
 
 function buildCerebrasPayload(model: string, messages: SparkAIMessage[]) {
@@ -445,8 +688,9 @@ function buildCerebrasPayload(model: string, messages: SparkAIMessage[]) {
   };
 }
 
-async function callCerebrasOnce(model: string, messages: SparkAIMessage[]): Promise<SparkResult> {
-  if (!CEREBRAS_API_KEY) {
+async function callCerebrasOnce(model: string, messages: SparkAIMessage[], apiKey?: string): Promise<SparkResult> {
+  const key = apiKey || CEREBRAS_API_KEY;
+  if (!key) {
     throw new Error("CEREBRAS_API_KEY is not set for the spark-ai Edge Function.");
   }
 
@@ -454,7 +698,7 @@ async function callCerebrasOnce(model: string, messages: SparkAIMessage[]): Prom
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${CEREBRAS_API_KEY}`,
+      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(buildCerebrasPayload(model, messages)),
@@ -481,14 +725,29 @@ async function callCerebrasOnce(model: string, messages: SparkAIMessage[]): Prom
 }
 
 async function callCerebras(messages: SparkAIMessage[]) {
-  try {
-    return await callCerebrasOnce(CEREBRAS_MODEL, messages);
-  } catch (error) {
-    const message = describeProviderError(error);
-    if (!isQuotaError(message) && !isRecoverableModelError(message)) throw error;
-    if (!CEREBRAS_FALLBACK_MODEL || CEREBRAS_FALLBACK_MODEL === CEREBRAS_MODEL) throw error;
-    return callCerebrasOnce(CEREBRAS_FALLBACK_MODEL, messages);
+  const keys = getCerebrasApiKeys();
+  if (keys.length === 0) {
+    throw new Error("CEREBRAS_API_KEY is not set for the spark-ai Edge Function.");
   }
+
+  const models = [CEREBRAS_MODEL, CEREBRAS_FALLBACK_MODEL].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i);
+  let lastError: unknown = null;
+
+  for (const apiKey of keys) {
+    for (const model of models) {
+      try {
+        return await callCerebrasOnce(model, messages, apiKey);
+      } catch (error) {
+        lastError = error;
+        const message = describeProviderError(error);
+        if (!isQuotaError(message) && !isRecoverableModelError(message)) {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError ?? new Error("All Cerebras API keys and models exhausted.");
 }
 
 function isGroqCompoundModel(model: string) {
@@ -529,10 +788,20 @@ function buildOpenAICompatiblePayload(
       : {}),
     ...(options?.groundedSearch && isGroqBrowserSearchModel(model)
       ? {
-          tool_choice: "required",
+          tool_choice: "auto",
           tools: [{ type: "browser_search" }],
         }
       : {}),
+  };
+}
+
+function buildNvidiaPayload(model: string, messages: SparkAIMessage[]) {
+  return {
+    model,
+    messages: buildTextOnlyMessages(messages),
+    temperature: 0.2,
+    max_tokens: 4096,
+    ...(likelyRequestsJson(messages) ? { response_format: { type: "json_object" } } : {}),
   };
 }
 
@@ -540,8 +809,10 @@ async function callGroqOnce(
   model: string,
   messages: SparkAIMessage[],
   options?: { allowImages?: boolean; grounded?: boolean },
+  apiKey?: string,
 ): Promise<SparkResult> {
-  if (!GROQ_API_KEY) {
+  const key = apiKey || GROQ_API_KEY;
+  if (!key) {
     throw new Error("GROQ_API_KEY is not set for the spark-ai Edge Function.");
   }
 
@@ -549,7 +820,7 @@ async function callGroqOnce(
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(buildOpenAICompatiblePayload(model, messages, {
@@ -583,44 +854,146 @@ async function callGroq(
   messages: SparkAIMessage[],
   mode: "text" | "search" | "vision" = "text",
 ) {
+  const keys = getGroqApiKeys();
+  if (keys.length === 0) {
+    throw new Error("GROQ_API_KEY is not set for the spark-ai Edge Function.");
+  }
+
   const primaryModel = mode === "search"
     ? GROQ_SEARCH_MODEL
     : mode === "vision"
       ? GROQ_VISION_MODEL
       : GROQ_MODEL;
 
+  const models = [primaryModel, GROQ_FALLBACK_MODEL].filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i);
+  let lastError: unknown = null;
+
+  for (const apiKey of keys) {
+    for (const model of models) {
+      if (mode === "vision" && hasImages(messages) && model === GROQ_FALLBACK_MODEL) {
+        continue;
+      }
+      if (mode === "search" && !isGroqSearchCapableModel(model)) {
+        continue;
+      }
+
+      try {
+        return await callGroqOnce(model, messages, {
+          allowImages: mode === "vision",
+          grounded: mode === "search",
+        }, apiKey);
+      } catch (error) {
+        lastError = error;
+        const message = describeProviderError(error);
+        if (!isQuotaError(message) && !isRecoverableModelError(message)) {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError ?? new Error("All Groq API keys and models exhausted.");
+}
+
+async function callNvidiaOnce(model: string, messages: SparkAIMessage[]): Promise<SparkResult> {
+  if (!NVIDIA_API_KEY) {
+    throw new Error("NVIDIA_API_KEY is not set for the spark-ai Edge Function.");
+  }
+
+  const endpoint = "https://integrate.api.nvidia.com/v1/chat/completions";
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${NVIDIA_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildNvidiaPayload(model, messages)),
+  });
+
+  const payload = await response.json().catch(() => null) as OpenAICompatibleResponse | null;
+  if (!response.ok) {
+    const base = payload?.error?.message || `NVIDIA request failed with status ${response.status}.`;
+    throw new Error(`${base} [model=${model}]`);
+  }
+
+  const content = extractOpenAICompatibleText(payload);
+  if (!content) {
+    throw new Error("NVIDIA returned an empty response.");
+  }
+
+  return {
+    content,
+    citations: [],
+    grounded: false,
+    model,
+    provider: "nvidia",
+  };
+}
+
+async function callNvidia(messages: SparkAIMessage[]) {
   try {
-    return await callGroqOnce(primaryModel, messages, {
-      allowImages: mode === "vision",
-      grounded: mode === "search",
-    });
+    return await callNvidiaOnce(NVIDIA_MODEL, messages);
   } catch (error) {
     const message = describeProviderError(error);
     if (!isQuotaError(message) && !isRecoverableModelError(message)) throw error;
-    if (!GROQ_FALLBACK_MODEL || GROQ_FALLBACK_MODEL === primaryModel) throw error;
-
-    // Vision fallback: the text fallback model cannot process images.
-    // Throwing here lets the outer provider chain escalate to Gemini Vision
-    // instead of silently returning a response that ignored the images entirely.
-    if (mode === "vision" && hasImages(messages)) {
-      throw new Error(
-        `Groq Vision model (${primaryModel}) is unavailable and the text-only fallback cannot process images. ` +
-        `Escalating to the next vision-capable provider.`,
-      );
-    }
-
-    if (mode === "search" && !isGroqSearchCapableModel(GROQ_FALLBACK_MODEL)) {
-      throw new Error(
-        `Groq search model (${primaryModel}) is unavailable and fallback model (${GROQ_FALLBACK_MODEL}) ` +
-        `cannot perform grounded web search. Escalating to the next grounded provider.`,
-      );
-    }
-
-    return callGroqOnce(GROQ_FALLBACK_MODEL, messages, {
-      allowImages: false,
-      grounded: mode === "search",
-    });
+    if (!NVIDIA_FALLBACK_MODEL || NVIDIA_FALLBACK_MODEL === NVIDIA_MODEL) throw error;
+    return callNvidiaOnce(NVIDIA_FALLBACK_MODEL, messages);
   }
+}
+
+async function runProviderChain(
+  configuredAttempts: ProviderAttempt[],
+  messages: SparkAIMessage[],
+): Promise<{ result: SparkResult | null; failures: string[] }> {
+  const failures: string[] = [];
+  const attemptedProviders: string[] = [];
+
+  for (let i = 0; i < configuredAttempts.length; i++) {
+    const attempt = configuredAttempts[i];
+    try {
+      const handoffMessages = prependHandoffInstruction(messages, attemptedProviders);
+      const result = await attempt.run(handoffMessages);
+
+      if (looksLikeTruncated(result.content) && i + 1 < configuredAttempts.length) {
+        const nextAttempt = configuredAttempts[i + 1];
+        try {
+          const continuationMessages: SparkAIMessage[] = [
+            ...handoffMessages,
+            {
+              role: "assistant",
+              content: result.content,
+              images: [],
+            },
+            {
+              role: "user",
+              content:
+                "Your response was cut off. Continue writing from exactly where you stopped — " +
+                "do NOT repeat anything you already wrote, do NOT add a heading or transition phrase, " +
+                "just pick up mid-sentence if needed.",
+              images: [],
+            },
+          ];
+          const continuation = await nextAttempt.run(continuationMessages);
+          return {
+            result: {
+              ...result,
+              content: result.content.trimEnd() + " " + continuation.content.trimStart(),
+            },
+            failures,
+          };
+        } catch {
+          return { result, failures };
+        }
+      }
+
+      return { result, failures };
+    } catch (error) {
+      attemptedProviders.push(attempt.label);
+      failures.push(`${attempt.label}: ${describeProviderError(error)}`);
+    }
+  }
+
+  return { result: null, failures };
 }
 
 function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useSearch = false): ProviderAttempt[] {
@@ -630,19 +1003,25 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
     {
       label: "Cerebras",
       provider: "cerebras" as const,
-      configured: Boolean(CEREBRAS_API_KEY),
+      configured: getCerebrasApiKeys().length > 0,
       run: (currentMessages) => callCerebras(currentMessages),
     },
     {
       label: "Groq",
       provider: "groq" as const,
-      configured: Boolean(GROQ_API_KEY),
+      configured: getGroqApiKeys().length > 0,
       run: (currentMessages) => callGroq(currentMessages, "text"),
+    },
+    {
+      label: "NVIDIA",
+      provider: "nvidia" as const,
+      configured: Boolean(NVIDIA_API_KEY),
+      run: (currentMessages) => callNvidia(currentMessages),
     },
     {
       label: "Gemini",
       provider: "gemini" as const,
-      configured: Boolean(GEMINI_API_KEY),
+      configured: getGeminiApiKeys().length > 0,
       run: (currentMessages) => callGemini(currentMessages, false),
     },
   ];
@@ -651,13 +1030,13 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
     {
       label: "Gemini Search",
       provider: "gemini" as const,
-      configured: Boolean(GEMINI_API_KEY),
+      configured: getGeminiApiKeys().length > 0,
       run: (currentMessages) => callGemini(currentMessages, true),
     },
     {
       label: "Groq Search",
       provider: "groq" as const,
-      configured: Boolean(GROQ_API_KEY),
+      configured: getGroqApiKeys().length > 0,
       run: (currentMessages) => callGroq(currentMessages, "search"),
     },
   ];
@@ -666,19 +1045,25 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
     {
       label: "Gemini Vision",
       provider: "gemini" as const,
-      configured: Boolean(GEMINI_API_KEY),
+      configured: getGeminiApiKeys().length > 0,
       run: (currentMessages) => callGemini(currentMessages, false),
     },
     {
       label: "Groq Vision",
       provider: "groq" as const,
-      configured: Boolean(GROQ_API_KEY),
+      configured: getGroqApiKeys().length > 0,
       run: (currentMessages) => callGroq(currentMessages, "vision"),
     },
   ];
 
-  if (task === "fact-check" || useSearch) {
+  if (task === "fact-check") {
     return searchChain;
+  }
+
+  if (useSearch) {
+    // Attempt grounded search first, then fall back to text providers
+    // (Cerebras, Groq, NVIDIA, Gemini) so general chat never gets completely blocked.
+    return [...searchChain, ...textChain];
   }
 
   if (task === "syllabus-analysis") {
@@ -688,7 +1073,7 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
           {
             label: "Gemini",
             provider: "gemini" as const,
-            configured: Boolean(GEMINI_API_KEY),
+            configured: getGeminiApiKeys().length > 0,
             run: (currentMessages) => callGemini(currentMessages, false),
           },
           ...textChain.filter((attempt) => attempt.provider !== "gemini"),
@@ -700,6 +1085,35 @@ function buildProviderAttempts(messages: SparkAIMessage[], task: SparkTask, useS
   }
 
   return textChain;
+}
+
+function buildTinyFishModelAttempts(): ProviderAttempt[] {
+  return [
+    {
+      label: "Cerebras",
+      provider: "cerebras" as const,
+      configured: getCerebrasApiKeys().length > 0,
+      run: (currentMessages) => callCerebras(currentMessages),
+    },
+    {
+      label: "Groq",
+      provider: "groq" as const,
+      configured: getGroqApiKeys().length > 0,
+      run: (currentMessages) => callGroq(currentMessages, "text"),
+    },
+    {
+      label: "NVIDIA",
+      provider: "nvidia" as const,
+      configured: Boolean(NVIDIA_API_KEY),
+      run: (currentMessages) => callNvidia(currentMessages),
+    },
+    {
+      label: "Gemini",
+      provider: "gemini" as const,
+      configured: getGeminiApiKeys().length > 0,
+      run: (currentMessages) => callGemini(currentMessages, false),
+    },
+  ].filter((attempt) => attempt.configured);
 }
 
 /**
@@ -724,65 +1138,49 @@ async function callPrimaryProvider(messages: SparkAIMessage[], task: SparkTask, 
   const attempts = buildProviderAttempts(messages, task, useSearch);
   const configuredAttempts = attempts.filter((attempt) => attempt.configured);
 
-  if (configuredAttempts.length === 0) {
-    throw new Error("No AI provider is configured for Spark. Add at least one provider secret to the spark-ai Edge Function.");
-  }
-
   const failures: string[] = [];
-  const attemptedProviders: string[] = [];
 
-  for (let i = 0; i < configuredAttempts.length; i++) {
-    const attempt = configuredAttempts[i];
+  if (shouldUseTinyFishEvidence(messages, task, useSearch)) {
     try {
-      const handoffMessages = prependHandoffInstruction(messages, attemptedProviders);
-      const result = await attempt.run(handoffMessages);
-
-      // ── Truncation continuation ──────────────────────────────────────────
-      // If this provider returned a response that looks like it was cut off
-      // mid-sentence (e.g. hit max_tokens), ask the NEXT available provider
-      // to continue from exactly where it stopped rather than start over.
-      if (looksLikeTruncated(result.content) && i + 1 < configuredAttempts.length) {
-        const nextAttempt = configuredAttempts[i + 1];
-        try {
-          const continuationMessages: SparkAIMessage[] = [
-            ...handoffMessages,
-            {
-              role: "assistant",
-              content: result.content,
-              images: [],
-            },
-            {
-              role: "user",
-              content:
-                "Your response was cut off. Continue writing from exactly where you stopped — " +
-                "do NOT repeat anything you already wrote, do NOT add a heading or transition phrase, " +
-                "just pick up mid-sentence if needed.",
-              images: [],
-            },
-          ];
-          const continuation = await nextAttempt.run(continuationMessages);
-          // Stitch the two halves together seamlessly.
-          return {
-            ...result,
-            content: result.content.trimEnd() + " " + continuation.content.trimStart(),
-          };
-        } catch {
-          // Continuation failed — return the partial result as-is rather than
-          // losing it entirely. The user gets a slightly truncated answer which
-          // is better than an error.
-          return result;
-        }
+      const augmented = await buildTinyFishAugmentedMessages(messages, task);
+      const tinyFishRun = await runProviderChain(buildTinyFishModelAttempts(), augmented.messages);
+      if (tinyFishRun.result) {
+        return {
+          ...tinyFishRun.result,
+          citations: augmented.citations.length > 0 ? augmented.citations : tinyFishRun.result.citations,
+          grounded: true,
+          searchProvider: "tinyfish",
+        };
       }
-
-      return result;
+      failures.push(...tinyFishRun.failures.map((failure) => `TinyFish-backed ${failure}`));
     } catch (error) {
-      attemptedProviders.push(attempt.label);
-      failures.push(`${attempt.label}: ${describeProviderError(error)}`);
+      failures.push(`TinyFish: ${describeProviderError(error)}`);
     }
   }
 
+  if (configuredAttempts.length === 0) {
+    if (failures.length > 0) {
+      throw new Error(`Spark exhausted its AI fallback chain for ${task}. ${failures.join(" | ")}`);
+    }
+    throw new Error("No AI provider is configured for Spark. Add at least one provider secret to the spark-ai Edge Function.");
+  }
+
+  const primaryRun = await runProviderChain(configuredAttempts, messages);
+  if (primaryRun.result) {
+    if ((task === "fact-check" || useSearch) && primaryRun.result.grounded) {
+      return {
+        ...primaryRun.result,
+        searchProvider: primaryRun.result.provider === "gemini" || primaryRun.result.provider === "groq"
+          ? primaryRun.result.provider
+          : null,
+      };
+    }
+
+    return primaryRun.result;
+  }
+
   throw new Error(
-    `Spark exhausted its AI fallback chain for ${task}. ${failures.join(" | ")}`,
+    `Spark exhausted its AI fallback chain for ${task}. ${[...failures, ...primaryRun.failures].join(" | ")}`,
   );
 }
 
@@ -817,6 +1215,7 @@ Deno.serve(async (req) => {
       grounded: result.grounded,
       model: result.model,
       provider: result.provider,
+      searchProvider: result.searchProvider ?? null,
       task,
       userId: user.id,
     });

@@ -1,6 +1,6 @@
 # LearnBeam
 
-LearnBeam is an AI-powered academic workspace built for students. It combines course management, document upload, syllabus analysis, reminders, grades, quizzes, and Spark AI into one web application.
+LearnBeam is an AI-powered academic workspace built for students. It combines course management, document upload, syllabus analysis, reminders, grades, quizzes, Spark AI, and an adaptive Smart Study Planner in one web application.
 
 ## Team Information
 
@@ -36,6 +36,7 @@ Students often manage courses across too many disconnected tools such as learnin
   - **Spark Open** mode for broader help
 - Fact-check reports for uploaded non-syllabus documents
 - Quiz generation from uploaded course materials
+- Smart Study Planner with course-progress tracking, topic coverage, weekly study sessions, task completion, and AI-assisted plan generation
 - Persistent course insights, fact-check reports, and profile data
 
 ## Technologies Used
@@ -61,6 +62,7 @@ Students often manage courses across too many disconnected tools such as learnin
 - Gemini
 - Cerebras
 - Groq
+- NVIDIA NIM
 
 ### File Processing
 
@@ -80,7 +82,9 @@ LearnBeam
 │   ├── functions/            # spark-ai Edge Function and shared helpers
 │   └── migrations/           # Database migration files
 ├── Documentation/           # Architecture, database, user guide, maintenance docs
+├── images/                  # Interface wireframes and Smart Study Planner prototype
 ├── Testing/                 # Test plan and test results
+├── user-manual.md           # Complete version 2.0 user manual
 ├── CONTRIBUTIONS.md         # Team member contribution summary
 ├── SUPABASE_SCHEMA.sql      # Database schema setup SQL
 ├── package.json             # Project dependencies and scripts
@@ -90,13 +94,14 @@ LearnBeam
 ## Documentation
 
 - [Team Contributions](./CONTRIBUTIONS.md)
+- [User Manual](./user-manual.md)
+- [Interface Images](./images)
 - [System Architecture](./Documentation/System-Architecture.md)
 - [Database Overview](./Documentation/Database-Overview.md)
 - [User Guide](./Documentation/User-Guide.md)
 - [Maintenance Plan](./Documentation/Maintenance-Plan.md)
 - [Test Plan](./Testing/Test-Plan.md)
 - [Test Results](./Testing/Test-Results.md)
-- [Capstone II Submission Info](./CapstoneII_Submission.md)
 
 ## Installation
 
@@ -138,9 +143,10 @@ npm run preview
 ## Backend and Database Setup
 
 - Configure Supabase Auth, Storage, and Edge Functions
-- Apply the migration in `supabase/migrations/20260420000000_persistence.sql`
+- Apply all SQL migrations in `supabase/migrations/` in filename order
 - Use `SUPABASE_SCHEMA.sql` for full schema reference and setup
 - Deploy the `spark-ai` Edge Function to Supabase
+- Optional Spark provider secrets include `GEMINI_API_KEY`, `CEREBRAS_API_KEY`, `GROQ_API_KEY`, `NVIDIA_API_KEY`, and `TINYFISH_API_KEY`
 
 ## Testing
 
@@ -162,6 +168,5 @@ See the [Testing](./Testing) folder for details.
 
 ## Notes
 
-- Local-only archive materials are stored in `more stuff/` and are intentionally excluded from Git.
 - Local environment secrets are not committed.
-- Spark routes AI tasks across Gemini, Cerebras, and Groq depending on task type and reliability needs.
+- Spark routes AI tasks across Gemini, Cerebras, Groq, and NVIDIA depending on task type and reliability needs.

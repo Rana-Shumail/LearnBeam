@@ -3,7 +3,7 @@
  * used across every CoursePage tab.
  */
 import {
-  BellRing, BarChart2, Brain, ClipboardList, FileText, Sparkles, X, HelpCircle, Bell,
+  BellRing, BarChart2, Brain, CalendarClock, ClipboardList, FileText, Sparkles, X, HelpCircle, Bell,
 } from "lucide-react";
 import type { StoredSparkCitation, StoredSparkMessage } from "../../../lib/courseData";
 import { formatDueForTimeline } from "../../../lib/courseData";
@@ -36,7 +36,7 @@ export const sHead: React.CSSProperties = {
 };
 
 /* ── Domain types ───────────────────────────────── */
-export type TabId = "overview" | "assignments" | "grades" | "docs" | "reminders" | "activities";
+export type TabId = "overview" | "assignments" | "grades" | "docs" | "reminders" | "activities" | "study-planner";
 
 export type Doc = {
   id: string;
@@ -78,6 +78,7 @@ export const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "docs",        label: "Documents",   icon: <FileText      size={13} /> },
   { id: "reminders",   label: "Reminders",   icon: <BellRing      size={13} /> },
   { id: "activities",  label: "Activities",  icon: <Brain         size={13} /> },
+  { id: "study-planner", label: "Study Planner", icon: <CalendarClock size={13} /> },
 ];
 
 export const TAB_TIPS: Record<TabId, string> = {
@@ -87,12 +88,13 @@ export const TAB_TIPS: Record<TabId, string> = {
   docs:        "Everything Spark knows about this course. Files uploaded here or via Spark chat appear in this list.",
   reminders:   "Deadlines specific to this course. Add custom ones anytime.",
   activities:  "AI-powered study activities built from your uploaded documents — none of these affect your grade.",
+  "study-planner": "A saved weekly plan built from your assignments, reminders, and syllabus insights. Complete sessions, refresh when course data changes, or export the plan to your calendar.",
 };
 
 /* ── Chat helpers ───────────────────────────────── */
 export function createChatMessage(
-  message: Omit<ChatMsg, "id" | "createdAt" | "citations" | "flagged" | "flagNote" | "provider" | "mode"> &
-    Partial<Pick<ChatMsg, "citations" | "flagged" | "flagNote" | "provider" | "mode">>,
+  message: Omit<ChatMsg, "id" | "createdAt" | "citations" | "flagged" | "flagNote" | "provider" | "searchProvider" | "mode"> &
+    Partial<Pick<ChatMsg, "citations" | "flagged" | "flagNote" | "provider" | "searchProvider" | "mode">>,
 ): ChatMsg {
   return {
     id: crypto.randomUUID(),
@@ -101,6 +103,7 @@ export function createChatMessage(
     flagged: message.flagged ?? false,
     flagNote: message.flagNote ?? null,
     provider: message.provider ?? null,
+    searchProvider: message.searchProvider ?? null,
     mode: message.mode ?? null,
     ...message,
   };

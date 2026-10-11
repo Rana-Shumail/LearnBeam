@@ -55,7 +55,8 @@ export type StoredSparkCitation = {
   kind?: "document" | "web";
 };
 
-export type StoredSparkProvider = "gemini" | "cerebras" | "groq";
+export type StoredSparkProvider = "gemini" | "cerebras" | "groq" | "nvidia";
+export type StoredSearchProvider = "tinyfish" | "gemini" | "groq";
 export type StoredSparkMode = "course" | "global";
 
 export type StoredSparkMessage = {
@@ -66,8 +67,55 @@ export type StoredSparkMessage = {
   flagged: boolean;
   flagNote: string | null;
   provider: StoredSparkProvider | null;
+  searchProvider: StoredSearchProvider | null;
   mode: StoredSparkMode | null;
   createdAt: string;
+};
+
+export type StudySessionPriority = "high" | "medium" | "light";
+
+export type StoredStudyTopic = {
+  label: string;
+  status: "covered" | "uncovered" | "priority";
+  sourceLabel: string;
+};
+
+export type StoredQuizAttempt = {
+  id: string;
+  quizId: string;
+  topic: string;
+  correct: number;
+  total: number;
+  completedAt: string;
+};
+
+export type StoredLearningActivity = {
+  focusSessions: number;
+  focusMinutes: number;
+  quizAttempts: StoredQuizAttempt[];
+  lastActivityAt: string | null;
+};
+
+export type StoredStudySession = {
+  id: string;
+  title: string;
+  detail: string;
+  startAt: string;
+  endAt: string;
+  due: string | null;
+  sourceType: "assignment" | "reminder" | "syllabus" | "document" | "quiz";
+  sourceLabel: string;
+  priority: StudySessionPriority;
+  completed: boolean;
+};
+
+export type StoredStudyPlan = {
+  sourceSignature: string;
+  generatedAt: string;
+  summary: string;
+  sessions: StoredStudySession[];
+  topics: StoredStudyTopic[];
+  activity: StoredLearningActivity;
 };
 
 export type StoredSparkSuggestion = {
@@ -110,6 +158,8 @@ export type StoredCourseData = {
   assignments: StoredCourseAssignment[];
   reminders: StoredCourseReminder[];
   insights: StoredCourseInsights | null;
+  studyPlan: StoredStudyPlan | null;
+  learningActivity: StoredLearningActivity;
   chatHistory: StoredSparkMessage[];
   suggestions: StoredSuggestionState | null;
   quizSessions: StoredQuizSession[];
@@ -150,6 +200,8 @@ function createEmptyCourseData(): StoredCourseData {
     assignments: [],
     reminders: [],
     insights: null,
+    studyPlan: null,
+    learningActivity: { focusSessions: 0, focusMinutes: 0, quizAttempts: [], lastActivityAt: null },
     chatHistory: [],
     suggestions: null,
     quizSessions: [],
@@ -230,7 +282,7 @@ function normalizeChatHistory(items: unknown): StoredSparkMessage[] {
             excerpt: citationRecord.excerpt,
             url: typeof citationRecord.url === "string" ? citationRecord.url : null,
             kind: citationRecord.kind === "web" ? "web" : "document",
-          }];
+          }] as StoredSparkCitation[];
         })
       : [];
 
@@ -241,13 +293,104 @@ function normalizeChatHistory(items: unknown): StoredSparkMessage[] {
       citations,
       flagged: Boolean(record.flagged),
       flagNote: typeof record.flagNote === "string" ? record.flagNote : null,
-      provider: record.provider === "cerebras" || record.provider === "gemini" || record.provider === "groq"
+      provider: record.provider === "cerebras" || record.provider === "gemini" || record.provider === "groq" || record.provider === "nvidia"
         ? record.provider
+        : null,
+      searchProvider: record.searchProvider === "tinyfish" || record.searchProvider === "gemini" || record.searchProvider === "groq"
+        ? record.searchProvider
         : null,
       mode: record.mode === "course" || record.mode === "global" ? record.mode : null,
       createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
-    }];
+    }] as StoredSparkMessage[];
   });
+}
+
+function normalizeStudyPlan(value: unknown): StoredStudyPlan | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.sourceSignature !== "string" || !Array.isArray(record.sessions)) return null;
+
+  const sessions = record.sessions.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const session = item as Record<string, unknown>;
+    if (
+      typeof session.id !== "string" ||
+      typeof session.title !== "string" ||
+      typeof session.detail !== "string" ||
+      typeof session.startAt !== "string" ||
+      typeof session.endAt !== "string" ||
+      typeof session.sourceLabel !== "string"
+    ) {
+      return [];
+    }
+
+    const sourceType = session.sourceType === "assignment" || session.sourceType === "reminder" || session.sourceType === "syllabus" || session.sourceType === "document" || session.sourceType === "quiz"
+      ? session.sourceType
+      : "assignment";
+    const priority = session.priority === "high" || session.priority === "medium" || session.priority === "light"
+      ? session.priority
+      : "medium";
+
+    return [{
+      id: session.id,
+      title: session.title,
+      detail: session.detail,
+      startAt: session.startAt,
+      endAt: session.endAt,
+      due: typeof session.due === "string" ? session.due : null,
+      sourceType,
+      sourceLabel: session.sourceLabel,
+      priority,
+      completed: Boolean(session.completed),
+    }] as StoredStudySession[];
+  });
+
+  const topics = Array.isArray(record.topics) ? record.topics.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const topic = item as Record<string, unknown>;
+    if (typeof topic.label !== "string" || typeof topic.sourceLabel !== "string") return [];
+    const status = topic.status === "covered" || topic.status === "uncovered" || topic.status === "priority"
+      ? topic.status
+      : "uncovered";
+    return [{ label: topic.label, sourceLabel: topic.sourceLabel, status }] as StoredStudyTopic[];
+  }) : [];
+
+  const activityRecord = record.activity && typeof record.activity === "object"
+    ? record.activity as Record<string, unknown>
+    : {};
+  const quizAttempts = Array.isArray(activityRecord.quizAttempts) ? activityRecord.quizAttempts.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const attempt = item as Record<string, unknown>;
+    if (
+      typeof attempt.id !== "string" ||
+      typeof attempt.quizId !== "string" ||
+      typeof attempt.topic !== "string" ||
+      typeof attempt.correct !== "number" ||
+      typeof attempt.total !== "number"
+    ) return [];
+    return [{
+      id: attempt.id,
+      quizId: attempt.quizId,
+      topic: attempt.topic,
+      correct: attempt.correct,
+      total: attempt.total,
+      completedAt: typeof attempt.completedAt === "string" ? attempt.completedAt : new Date().toISOString(),
+    }] as StoredQuizAttempt[];
+  }) : [];
+
+  return {
+    sourceSignature: record.sourceSignature,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : new Date().toISOString(),
+    summary: typeof record.summary === "string" ? record.summary : "",
+    sessions,
+    topics,
+    activity: {
+      focusSessions: typeof activityRecord.focusSessions === "number" ? Math.max(0, activityRecord.focusSessions) : 0,
+      focusMinutes: typeof activityRecord.focusMinutes === "number" ? Math.max(0, activityRecord.focusMinutes) : 0,
+      quizAttempts,
+      lastActivityAt: typeof activityRecord.lastActivityAt === "string" ? activityRecord.lastActivityAt : null,
+    },
+  };
 }
 
 function normalizeQuizSessions(items: unknown): StoredQuizSession[] {
@@ -311,6 +454,17 @@ export function loadStoredCourseData(courseId: string): StoredCourseData {
   const course = map[courseId];
   if (!course) return createEmptyCourseData();
 
+  const normalizedStudyPlan = normalizeStudyPlan(course.studyPlan);
+  const storedActivity = course.learningActivity && typeof course.learningActivity === "object"
+    ? course.learningActivity
+    : normalizedStudyPlan?.activity;
+  const activity: StoredLearningActivity = {
+    focusSessions: typeof storedActivity?.focusSessions === "number" ? Math.max(0, storedActivity.focusSessions) : 0,
+    focusMinutes: typeof storedActivity?.focusMinutes === "number" ? Math.max(0, storedActivity.focusMinutes) : 0,
+    quizAttempts: Array.isArray(storedActivity?.quizAttempts) ? storedActivity.quizAttempts : [],
+    lastActivityAt: typeof storedActivity?.lastActivityAt === "string" ? storedActivity.lastActivityAt : null,
+  };
+
   return {
     docs: Array.isArray(course.docs)
       ? course.docs.map((doc) => ({
@@ -323,6 +477,8 @@ export function loadStoredCourseData(courseId: string): StoredCourseData {
     assignments: Array.isArray(course.assignments) ? course.assignments : [],
     reminders: Array.isArray(course.reminders) ? course.reminders : [],
     insights: course.insights ?? null,
+    studyPlan: normalizedStudyPlan,
+    learningActivity: activity,
     chatHistory: normalizeChatHistory(course.chatHistory),
     suggestions: normalizeSuggestionState(course.suggestions),
     quizSessions: normalizeQuizSessions(course.quizSessions),

@@ -35,6 +35,46 @@ function getProviderBadge(provider: ChatMsg["provider"]) {
     };
   }
 
+  if (provider === "nvidia") {
+    return {
+      label: "Powered by NVIDIA",
+      textColor: "#166534",
+      background: "rgba(34, 197, 94, 0.14)",
+      borderColor: "rgba(22, 101, 52, 0.18)",
+    };
+  }
+
+  return null;
+}
+
+function getSearchProviderBadge(provider: ChatMsg["searchProvider"]) {
+  if (provider === "tinyfish") {
+    return {
+      label: "Web evidence via TinyFish",
+      textColor: "#065f46",
+      background: "rgba(16, 185, 129, 0.12)",
+      borderColor: "rgba(5, 150, 105, 0.18)",
+    };
+  }
+
+  if (provider === "gemini") {
+    return {
+      label: "Web search via Gemini",
+      textColor: "#6d28d9",
+      background: "rgba(109, 40, 217, 0.10)",
+      borderColor: "rgba(109, 40, 217, 0.16)",
+    };
+  }
+
+  if (provider === "groq") {
+    return {
+      label: "Web search via Groq",
+      textColor: "#0f172a",
+      background: "rgba(148, 163, 184, 0.16)",
+      borderColor: "rgba(71, 85, 105, 0.18)",
+    };
+  }
+
   return null;
 }
 
@@ -44,6 +84,7 @@ export function SparkMessage({ msg, compact }: { msg: ChatMsg; compact?: boolean
   const isAI     = msg.role === "ai";
   const isSystem = msg.role === "system";
   const providerBadge = isAI ? getProviderBadge(msg.provider) : null;
+  const searchProviderBadge = isAI ? getSearchProviderBadge(msg.searchProvider) : null;
 
   if (isSystem) return (
     <div style={{ textAlign: "center", padding: "6px 0" }}>
@@ -58,26 +99,51 @@ export function SparkMessage({ msg, compact }: { msg: ChatMsg; compact?: boolean
           {isAI ? <SparkLogo size={compact ? 28 : 34}/> : <User size={compact ? 18 : 22} style={{ color: "var(--accent)" }}/>}
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: isAI ? "flex-start" : "flex-end", gap: "5px", maxWidth: compact ? "calc(100% - 52px)" : "calc(100% - 64px)", minWidth: 0 }}>
-          {providerBadge && (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "5px",
-                padding: compact ? "3px 8px" : "4px 9px",
-                borderRadius: "999px",
-                fontFamily: F.body,
-                fontSize: compact ? "0.62rem" : "0.66rem",
-                fontWeight: 700,
-                letterSpacing: "0.01em",
-                color: providerBadge.textColor,
-                background: providerBadge.background,
-                border: `1px solid ${providerBadge.borderColor}`,
-                maxWidth: "100%",
-              }}
-            >
-              {providerBadge.label}
-            </span>
+          {(providerBadge || searchProviderBadge) && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+              {providerBadge && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: compact ? "3px 8px" : "4px 9px",
+                    borderRadius: "999px",
+                    fontFamily: F.body,
+                    fontSize: compact ? "0.62rem" : "0.66rem",
+                    fontWeight: 700,
+                    letterSpacing: "0.01em",
+                    color: providerBadge.textColor,
+                    background: providerBadge.background,
+                    border: `1px solid ${providerBadge.borderColor}`,
+                    maxWidth: "100%",
+                  }}
+                >
+                  {providerBadge.label}
+                </span>
+              )}
+              {searchProviderBadge && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: compact ? "3px 8px" : "4px 9px",
+                    borderRadius: "999px",
+                    fontFamily: F.body,
+                    fontSize: compact ? "0.61rem" : "0.64rem",
+                    fontWeight: 700,
+                    letterSpacing: "0.01em",
+                    color: searchProviderBadge.textColor,
+                    background: searchProviderBadge.background,
+                    border: `1px solid ${searchProviderBadge.borderColor}`,
+                    maxWidth: "100%",
+                  }}
+                >
+                  {searchProviderBadge.label}
+                </span>
+              )}
+            </div>
           )}
           <div style={{ width: "100%", minWidth: 0, padding: compact ? "10px 12px" : "12px 15px", borderRadius: "16px", fontFamily: F.body, fontSize: compact ? "0.78rem" : "0.86rem", lineHeight: 1.68, borderBottomRightRadius: !isAI ? 4 : 16, borderBottomLeftRadius: isAI ? 4 : 16, background: !isAI ? "var(--accent)" : "var(--bg-secondary)", color: !isAI ? "var(--primary-foreground)" : "var(--text-primary)", border: isAI ? "1px solid var(--border)" : "none", overflowWrap: "anywhere", wordBreak: "break-word" }}>
             {isAI ? <MarkdownText text={msg.text} compact={compact}/> : msg.text}

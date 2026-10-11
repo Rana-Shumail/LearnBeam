@@ -47,20 +47,22 @@ This file is organized by semester so the team’s earlier completed work stays 
 
 ### Karan Kumar Sah
 
-- Work for this semester has not started yet.
+- Led Sprint 4 planning and integration for the Smart Study Planner.
+- Implemented the planner data model, Supabase persistence, AI-assisted plan generation, progress tracking, and production integration.
+- Updated the affected design documents, diagrams, wireframe, and prototype for the approved feature.
 
 ### Abhishek Acharya
 
-- Work for this semester has not started yet.
+- Participated in Sprint 4 feature evaluation, review, and team planning.
 
 ### Nischal Karki
 
-- Work for this semester has not started yet.
+- Participated in Sprint 4 feature evaluation, review, and team planning.
 
 ### Rana Ahmad Shumail
 
-- Work for this semester has not started yet.
+- Participated in Sprint 4 feature evaluation, review, and team planning.
 
 ### Pujan Ghimire
 
-- Work for this semester has not started yet.
+- Participated in Sprint 4 feature evaluation, review, and team planning.

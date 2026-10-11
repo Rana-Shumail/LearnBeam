@@ -4,7 +4,7 @@
  * RLS enforcing user-level data isolation server-side.
  */
 import { supabase } from "./supabase";
-import type { StoredCourseInsights } from "./courseData";
+import type { StoredCourseInsights, StoredStudyPlan } from "./courseData";
 
 /* ── Types ────────────────────────────────────────── */
 export type DbCourse = {
@@ -63,6 +63,14 @@ export type DbReminder = {
   due: string | null;
   done: boolean;
   created_at: string;
+};
+
+export type DbStudyPlanRow = {
+  course_id: string;
+  source_signature: string;
+  generated_at: string;
+  summary: string;
+  sessions: unknown;
 };
 
 /* ── Courses ──────────────────────────────────────── */
@@ -372,4 +380,106 @@ export async function upsertFactCheckReport(
       generated_at: new Date().toISOString(),
     }, { onConflict: "document_id" });
   if (error) console.error("upsertFactCheckReport:", error.message);
+}
+
+/* ── Study plans ─────────────────────────────────── */
+export async function fetchStudyPlan(courseId: string): Promise<StoredStudyPlan | null> {
+  const { data, error } = await supabase
+    .from("study_plans")
+    .select("course_id, source_signature, generated_at, summary, sessions, topics, activity")
+    .eq("course_id", courseId)
+    .single();
+  if (error || !data) return null;
+
+  const sessions = Array.isArray(data.sessions) ? data.sessions.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const session = item as Record<string, unknown>;
+    if (
+      typeof session.id !== "string" ||
+      typeof session.title !== "string" ||
+      typeof session.detail !== "string" ||
+      typeof session.startAt !== "string" ||
+      typeof session.endAt !== "string" ||
+      typeof session.sourceLabel !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      id: session.id,
+      title: session.title,
+      detail: session.detail,
+      startAt: session.startAt,
+      endAt: session.endAt,
+      due: typeof session.due === "string" ? session.due : null,
+      sourceType: session.sourceType === "assignment" || session.sourceType === "reminder" || session.sourceType === "syllabus" || session.sourceType === "document" || session.sourceType === "quiz"
+        ? session.sourceType
+        : "assignment",
+      sourceLabel: session.sourceLabel,
+      priority: session.priority === "high" || session.priority === "medium" || session.priority === "light"
+        ? session.priority
+        : "medium",
+      completed: Boolean(session.completed),
+    }];
+  }) : [];
+
+  return {
+    sourceSignature: typeof data.source_signature === "string" ? data.source_signature : "",
+    generatedAt: typeof data.generated_at === "string" ? data.generated_at : new Date().toISOString(),
+    summary: typeof data.summary === "string" ? data.summary : "",
+    sessions,
+    topics: Array.isArray(data.topics) ? data.topics.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const topic = item as Record<string, unknown>;
+      if (typeof topic.label !== "string" || typeof topic.sourceLabel !== "string") return [];
+      return [{
+        label: topic.label,
+        sourceLabel: topic.sourceLabel,
+        status: topic.status === "covered" || topic.status === "priority" ? topic.status : "uncovered",
+      }];
+    }) : [],
+    activity: (() => {
+      const value = data.activity && typeof data.activity === "object" ? data.activity as Record<string, unknown> : {};
+      const quizAttempts = Array.isArray(value.quizAttempts) ? value.quizAttempts.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const attempt = item as Record<string, unknown>;
+        if (typeof attempt.id !== "string" || typeof attempt.quizId !== "string" || typeof attempt.topic !== "string" || typeof attempt.correct !== "number" || typeof attempt.total !== "number") return [];
+        return [{ id: attempt.id, quizId: attempt.quizId, topic: attempt.topic, correct: attempt.correct, total: attempt.total, completedAt: typeof attempt.completedAt === "string" ? attempt.completedAt : new Date().toISOString() }];
+      }) : [];
+      return {
+        focusSessions: typeof value.focusSessions === "number" ? value.focusSessions : 0,
+        focusMinutes: typeof value.focusMinutes === "number" ? value.focusMinutes : 0,
+        quizAttempts,
+        lastActivityAt: typeof value.lastActivityAt === "string" ? value.lastActivityAt : null,
+      };
+    })(),
+  };
+}
+
+export async function upsertStudyPlan(courseId: string, plan: StoredStudyPlan): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const { error } = await supabase
+    .from("study_plans")
+    .upsert({
+      course_id: courseId,
+      user_id: user.id,
+      source_signature: plan.sourceSignature,
+      generated_at: plan.generatedAt,
+      summary: plan.summary,
+      sessions: plan.sessions,
+      topics: plan.topics,
+      activity: plan.activity,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "course_id" });
+
+  if (error) console.error("upsertStudyPlan:", error.message);
+}
+
+export async function deleteStudyPlan(courseId: string): Promise<void> {
+  const { error } = await supabase
+    .from("study_plans")
+    .delete()
+    .eq("course_id", courseId);
+  if (error) console.error("deleteStudyPlan:", error.message);
 }

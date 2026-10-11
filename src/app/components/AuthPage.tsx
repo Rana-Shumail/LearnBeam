@@ -9,6 +9,23 @@ import { useIsMobile } from "./ui/use-mobile";
 
 type AuthMode = "login" | "signup" | "forgot";
 
+function describeAuthError(error: unknown) {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : String(error ?? "");
+  const normalized = message.toLowerCase();
+
+  if (/failed to fetch|fetch failed|network|load failed|networkerror/.test(normalized)) {
+    return "LearnBeam's sign-in service is temporarily unreachable. The Supabase project may be paused; resume it in Supabase and try again.";
+  }
+  if (message === "Invalid login credentials") {
+    return "Incorrect email or password. Check your details or sign up.";
+  }
+  return message.trim() || "Sign-in could not be completed. Please try again.";
+}
+
 export function AuthPage() {
   const isMobile = useIsMobile();
   const [mode, setMode]                         = useState<AuthMode>("login");
@@ -50,15 +67,19 @@ export function AuthPage() {
     if (!SUPABASE_CONFIGURED) { navigate("/dashboard"); return; }
     setGoogleLoading(true);
     setAuthError(null);
-    const { error } = await signInWithGoogle();
-    if (error) {
-      setGoogleLoading(false);
-      // Provider not enabled yet in Supabase dashboard
-      if (error.message?.toLowerCase().includes("provider") || error.message?.toLowerCase().includes("not enabled")) {
-        setAuthError("Google sign-in isn't enabled yet. Go to Supabase Dashboard → Authentication → Providers → Google and turn it on.");
-      } else {
-        setAuthError(error.message);
+    try {
+      const { error } = await signInWithGoogle();
+      if (error) {
+        setGoogleLoading(false);
+        if (error.message?.toLowerCase().includes("provider") || error.message?.toLowerCase().includes("not enabled")) {
+          setAuthError("Google sign-in isn't enabled yet. Go to Supabase Dashboard → Authentication → Providers → Google and turn it on.");
+        } else {
+          setAuthError(describeAuthError(error));
+        }
       }
+    } catch (error) {
+      setGoogleLoading(false);
+      setAuthError(describeAuthError(error));
     }
     // On success Supabase redirects the browser automatically — no further action needed
   };
@@ -71,10 +92,15 @@ export function AuthPage() {
     if (!formData.email) { setAuthError("Enter your email address above."); return; }
     if (!SUPABASE_CONFIGURED) { setAuthSuccess("(Dev mode) Password reset email would be sent."); return; }
     setLoading(true);
-    const { error } = await sendPasswordReset(formData.email);
-    setLoading(false);
-    if (error) { setAuthError(error.message); return; }
-    setAuthSuccess("Check your inbox — we sent a password reset link.");
+    try {
+      const { error } = await sendPasswordReset(formData.email);
+      if (error) { setAuthError(describeAuthError(error)); return; }
+      setAuthSuccess("Check your inbox — we sent a password reset link.");
+    } catch (error) {
+      setAuthError(describeAuthError(error));
+    } finally {
+      setLoading(false);
+    }
   };
 
   /* ── Email / password submit ──────────────────── */
@@ -102,16 +128,12 @@ export function AuthPage() {
       if (isLogin) {
         const { error } = await signIn(formData.email, formData.password);
         if (error) {
-          setAuthError(
-            error.message === "Invalid login credentials"
-              ? "Incorrect email or password. Check your details or sign up."
-              : error.message
-          );
+          setAuthError(describeAuthError(error));
           return;
         }
       } else {
         const { data, error } = await signUp(formData.email, formData.password, formData.name);
-        if (error) { setAuthError(error.message); return; }
+        if (error) { setAuthError(describeAuthError(error)); return; }
         if (!data?.session) {
           // Email confirmation required
           setAuthSuccess("Account created! Check your inbox to confirm your email, then sign in.");
@@ -120,6 +142,8 @@ export function AuthPage() {
         }
       }
       navigate("/dashboard");
+    } catch (error) {
+      setAuthError(describeAuthError(error));
     } finally {
       setLoading(false);
     }

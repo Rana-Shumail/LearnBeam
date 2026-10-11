@@ -15,18 +15,21 @@ import {
   buildAssignmentReminder, isReminderUrgent,
   loadStoredCourseData, mergeCourseReminders, compressDocumentText,
   patchStoredCourseData, syncCachedCourseMetrics,
-  type StoredCourseInsights, type StoredSuggestionState,
+  parseDueString,
+  type StoredCourseInsights, type StoredLearningActivity, type StoredSuggestionState, type StoredStudyPlan,
 } from "../../lib/courseData";
 import { importSyllabusIntoCourse, rescanSyllabusDoc } from "../../lib/courseImport";
-import { generateCourseSuggestions, type SparkSuggestion } from "../../lib/courseAI";
+import { generateCourseSuggestions, generateStudyPlannerTopics, type SparkSuggestion } from "../../lib/courseAI";
 import { hasReadableDocumentText, hydrateStoredDocumentText, isBinaryGarbage } from "../../lib/documentText";
 import { extractDocumentText } from "../../lib/syllabus";
 import { factCheckDocument } from "../../lib/factCheck";
+import { buildStudyPlanSourceSignature, downloadStudyPlanCalendar, EMPTY_LEARNING_ACTIVITY, generateStudyPlan } from "../../lib/studyPlanner";
 import {
   fetchAssignments, uploadDocument,
   fetchDocuments, fetchReminders, upsertReminder,
   deleteReminder as dbDeleteReminder,
   fetchCourseInsights, updateDocumentTextContent, upsertCourseInsights,
+  deleteStudyPlan, fetchStudyPlan, upsertStudyPlan,
 } from "../../lib/db";
 
 // Sub-components
@@ -34,12 +37,15 @@ import { OverviewTab }               from "./course/OverviewTab";
 import { AssignmentsTab, GradesTab } from "./course/AssignmentsTab";
 import { DocsTab, RemindersTab }     from "./course/DocsTab";
 import { ActivitiesTab, FocusMode }  from "./course/ActivitiesTab";
+import { StudyPlannerTab }           from "./course/StudyPlannerTab";
 import { SparkChat }                 from "./course/SparkChat";
 import {
   F, TABS, HelpPanel, CourseRemindersPanel,
   createChatMessage, createDefaultSparkMessages,
   type TabId, type Doc, type Assignment, type SyllabusImportState, type ChatMsg,
 } from "./course/types.tsx";
+
+const STUDY_PLANNER_ENABLED = true;
 
 /* ─────────────────────────────────────────────────────
    MAIN COURSE PAGE
@@ -50,7 +56,7 @@ export function CoursePage() {
   const navigate = useNavigate();
 
   const storedCourseData = id ? loadStoredCourseData(id) : {
-    docs: [], assignments: [], reminders: [], insights: null,
+    docs: [], assignments: [], reminders: [], insights: null, studyPlan: null, learningActivity: EMPTY_LEARNING_ACTIVITY,
     chatHistory: [], suggestions: null, quizSessions: [], activeQuizId: null,
   };
   const allCourses: Course[] = loadCourses();
@@ -78,6 +84,10 @@ export function CoursePage() {
   const [courseSuggestionCache, setCourseSuggestionCache] = useState<StoredSuggestionState | null>(storedCourseData.suggestions);
   const [suggestionsLoading, setSuggestionsLoading]   = useState(false);
   const [suggestionsError, setSuggestionsError]       = useState<string | null>(null);
+  const [studyPlan, setStudyPlan]                     = useState<StoredStudyPlan | null>(storedCourseData.studyPlan);
+  const [learningActivity, setLearningActivity]       = useState<StoredLearningActivity>(storedCourseData.learningActivity);
+  const [plannerBusy, setPlannerBusy]                 = useState(false);
+  const [plannerError, setPlannerError]               = useState<string | null>(null);
   const [courseReady, setCourseReady]     = useState(false);
   const [syllabusInsights, setSyllabusInsights]       = useState<StoredCourseInsights | null>(storedCourseData.insights);
   const [syllabusImportState, setSyllabusImportState] = useState<SyllabusImportState>({
@@ -92,6 +102,21 @@ export function CoursePage() {
   );
 
   const courseName = syllabusInsights?.courseName ?? initialCourseName;
+  const plannerCanGenerate = assignments.some((assignment) => assignment.status !== "completed" && Boolean(parseDueString(assignment.due)))
+    || reminders.some((reminder) => !reminder.done && Boolean(parseDueString(reminder.due)))
+    || docs.some((document) => document.used && hasReadableDocumentText(document.textContent))
+    || learningActivity.focusSessions > 0
+    || learningActivity.quizAttempts.length > 0
+    || Boolean(syllabusInsights);
+  const plannerSourceSignature = buildStudyPlanSourceSignature({
+    courseCode,
+    courseName,
+    assignments,
+    reminders,
+    insights: syllabusInsights,
+    documents: docs,
+    activity: learningActivity,
+  });
 
   // ── Load data from Supabase or localStorage ──
   useEffect(() => {
@@ -100,6 +125,8 @@ export function CoursePage() {
     setSuggestionsError(null);
     const stored = loadStoredCourseData(id);
     setSyllabusInsights(stored.insights);
+    setStudyPlan(stored.studyPlan);
+    setLearningActivity(stored.learningActivity);
     setMessages(stored.chatHistory.length > 0 ? stored.chatHistory : createDefaultSparkMessages());
     setSparkSuggestions(stored.suggestions?.suggestions ?? []);
     setCourseSuggestionCache(stored.suggestions);
@@ -108,6 +135,8 @@ export function CoursePage() {
       setAssignments(stored.assignments);
       setDocs(stored.docs);
       setReminders(stored.reminders);
+      setStudyPlan(stored.studyPlan);
+      setLearningActivity(stored.learningActivity);
       setDataLoading(false);
       setCourseReady(true);
       return;
@@ -116,9 +145,10 @@ export function CoursePage() {
     let cancelled = false;
     async function load() {
       setDataLoading(true);
-      const [dbAssignments, dbDocs, dbReminders, dbInsights] = await Promise.all([
+      const [dbAssignments, dbDocs, dbReminders, dbInsights, dbStudyPlan] = await Promise.all([
         fetchAssignments(id!), fetchDocuments(id!), fetchReminders(id!),
         fetchCourseInsights(id!),
+        fetchStudyPlan(id!),
       ]);
       if (cancelled) return;
       const byId   = new Map(stored.docs.map(d => [d.id, d]));
@@ -141,6 +171,14 @@ export function CoursePage() {
       if (!dbInsights && stored.insights) {
         void upsertCourseInsights(id!, stored.insights).catch(() => {});
       }
+      if (dbStudyPlan) {
+        setStudyPlan(dbStudyPlan);
+        setLearningActivity(dbStudyPlan.activity);
+      }
+      if (!dbStudyPlan && stored.studyPlan) {
+        setStudyPlan(stored.studyPlan);
+        void upsertStudyPlan(id!, stored.studyPlan).catch(() => {});
+      }
       for (const dbDoc of dbDocs) {
         if (dbDoc.text_content) continue;
         const cachedText = byId.get(dbDoc.id)?.textContent ?? byPath.get(dbDoc.storage_path ?? `name:${dbDoc.name}`)?.textContent ?? null;
@@ -158,9 +196,9 @@ export function CoursePage() {
   // ── Persist to localStorage ──
   useEffect(() => {
     if (!id || !courseReady || dataLoading) return;
-    patchStoredCourseData(id, { docs, assignments, reminders, insights: syllabusInsights, chatHistory: messages, suggestions: courseSuggestionCache });
+    patchStoredCourseData(id, { docs, assignments, reminders, insights: syllabusInsights, studyPlan, learningActivity, chatHistory: messages, suggestions: courseSuggestionCache });
     syncCachedCourseMetrics(id, assignments);
-  }, [id, docs, assignments, reminders, syllabusInsights, messages, courseSuggestionCache, courseReady, dataLoading]);
+  }, [id, docs, assignments, reminders, syllabusInsights, studyPlan, learningActivity, messages, courseSuggestionCache, courseReady, dataLoading]);
 
   // ── Hydrate document text from Supabase Storage ──
   useEffect(() => {
@@ -225,6 +263,91 @@ export function CoursePage() {
     void loadSuggestions();
     return () => { cancelled = true; };
   }, [courseCode, courseName, docs, assignments, courseReady, dataLoading, courseSuggestionCache]);
+
+  const rebuildStudyPlan = async () => {
+    if (!id) return;
+
+    setPlannerBusy(true);
+    setPlannerError(null);
+    try {
+      const nextPlan = generateStudyPlan({
+        courseCode,
+        courseName,
+        assignments,
+        reminders,
+        insights: syllabusInsights,
+        documents: docs,
+        activity: learningActivity,
+      }, studyPlan);
+
+      if (!nextPlan) {
+        setStudyPlan(null);
+        if (SUPABASE_CONFIGURED) {
+          await deleteStudyPlan(id);
+        }
+        return;
+      }
+
+      setStudyPlan(nextPlan);
+      if (SUPABASE_CONFIGURED) {
+        await upsertStudyPlan(id, nextPlan);
+      }
+
+      const readableDocs = docs
+        .filter(document => document.used && hasReadableDocumentText(document.textContent))
+        .slice(0, 4)
+        .map(document => ({ name: document.name, textContent: document.textContent ?? "" }));
+      if (readableDocs.length > 0) {
+        try {
+          const topics = await generateStudyPlannerTopics({
+            courseCode,
+            courseName,
+            assignments: assignments.map(assignment => ({ label: assignment.label, status: assignment.status, grade: assignment.grade })),
+            documents: readableDocs,
+            quizAttempts: learningActivity.quizAttempts,
+          });
+          if (topics.length > 0) {
+            const enrichedPlan = { ...nextPlan, topics };
+            setStudyPlan(enrichedPlan);
+            if (SUPABASE_CONFIGURED) await upsertStudyPlan(id, enrichedPlan);
+          }
+        } catch (error) {
+          console.warn("Planner topic enrichment used deterministic fallback:", error);
+        }
+      }
+    } catch (error) {
+      setPlannerError(error instanceof Error ? error.message : "The study plan could not be updated.");
+    } finally {
+      setPlannerBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!STUDY_PLANNER_ENABLED) return;
+    if (!id || !courseReady || dataLoading || plannerBusy) return;
+    if (!plannerCanGenerate) {
+      if (!studyPlan) return;
+      void rebuildStudyPlan();
+      return;
+    }
+    if (studyPlan?.sourceSignature === plannerSourceSignature) return;
+    void rebuildStudyPlan();
+  }, [
+    id,
+    courseReady,
+    dataLoading,
+    plannerBusy,
+    plannerCanGenerate,
+    plannerSourceSignature,
+    studyPlan?.sourceSignature,
+    courseCode,
+    courseName,
+    assignments,
+    reminders,
+    syllabusInsights,
+    docs,
+    learningActivity,
+  ]);
 
   // ── Avatar live sync ──
   useEffect(() => subscribeToAvatar(setAvatarUrl), []);
@@ -483,7 +606,7 @@ export function CoursePage() {
     const streamId = crypto.randomUUID();
     setMessages(prev => [...prev,
       createChatMessage({ role: "user", text: msg, mode: sparkMode }),
-      { id: streamId, role: "ai", text: "", citations: [], flagged: false, flagNote: null, provider: null, mode: sparkMode, createdAt: new Date().toISOString() },
+      { id: streamId, role: "ai", text: "", citations: [], flagged: false, flagNote: null, provider: null, searchProvider: null, mode: sparkMode, createdAt: new Date().toISOString() },
     ]);
     setAiLoading(true);
     try {
@@ -495,6 +618,7 @@ export function CoursePage() {
             text: localOverview.text,
             citations: localOverview.citations,
             provider: null,
+            searchProvider: null,
           } : m));
           return;
         }
@@ -516,6 +640,7 @@ export function CoursePage() {
             text: localOverview.text,
             citations: localOverview.citations,
             provider: null,
+            searchProvider: null,
           } : m));
           return;
         }
@@ -533,12 +658,15 @@ export function CoursePage() {
       const result = await streamWithSparkAI(
         [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: msg }],
         (partial) => { setMessages(prev => prev.map(m => m.id === streamId ? { ...m, text: partial } : m)); },
-        { useSearch: false, task: sparkMode === "global" ? "general-chat" : "course-chat" },
+        { useSearch: sparkMode === "global", task: sparkMode === "global" ? "general-chat" : "course-chat" },
       );
       setMessages(prev => prev.map(m => m.id === streamId ? {
         ...m,
-        provider: result.provider === "cerebras" || result.provider === "gemini" || result.provider === "groq"
+        provider: result.provider === "cerebras" || result.provider === "gemini" || result.provider === "groq" || result.provider === "nvidia"
           ? result.provider
+          : null,
+        searchProvider: result.searchProvider === "tinyfish" || result.searchProvider === "gemini" || result.searchProvider === "groq"
+          ? result.searchProvider
           : null,
         citations: sparkMode === "course"
           ? courseEvidence.citations
@@ -560,6 +688,7 @@ export function CoursePage() {
         flagged: true,
         flagNote: failure.note,
         provider: null,
+        searchProvider: null,
       } : m));
     } finally {
       setAiLoading(false);
@@ -615,7 +744,7 @@ export function CoursePage() {
         void updateDocumentTextContent(dbDoc.id, extractedText).catch(() => {});
       }
       // Background fact-check — runs silently after upload, caches result for instant report view.
-      if (extractedText && docType !== "syllabus") {
+      if (extractedText) {
         void factCheckDocument(uploadedDoc).catch(() => {});
       }
     } else {
@@ -666,6 +795,58 @@ export function CoursePage() {
     await dbDeleteReminder(assignmentId);
   };
 
+  const handleExportStudyPlan = () => {
+    if (!studyPlan || studyPlan.sessions.length === 0) return;
+    downloadStudyPlanCalendar(studyPlan, courseCode, courseName);
+  };
+
+  const saveLearningActivity = (nextActivity: StoredLearningActivity) => {
+    setLearningActivity(nextActivity);
+    setStudyPlan(current => {
+      if (!current) return current;
+      const nextPlan = { ...current, activity: nextActivity };
+      if (id && SUPABASE_CONFIGURED) void upsertStudyPlan(id, nextPlan);
+      return nextPlan;
+    });
+  };
+
+  const handleFocusSessionComplete = (minutes: number) => {
+    saveLearningActivity({
+      ...learningActivity,
+      focusSessions: learningActivity.focusSessions + 1,
+      focusMinutes: learningActivity.focusMinutes + minutes,
+      lastActivityAt: new Date().toISOString(),
+    });
+  };
+
+  const handleQuizComplete = (attempt: { quizId: string; topic: string; correct: number; total: number }) => {
+    const nextAttempt = { ...attempt, id: crypto.randomUUID(), completedAt: new Date().toISOString() };
+    saveLearningActivity({
+      ...learningActivity,
+      quizAttempts: [...learningActivity.quizAttempts, nextAttempt].slice(-20),
+      lastActivityAt: nextAttempt.completedAt,
+    });
+  };
+
+  const handleToggleStudySession = (sessionId: string) => {
+    if (!id) return;
+    setStudyPlan(current => {
+      if (!current) return current;
+      const nextPlan: StoredStudyPlan = {
+        ...current,
+        sessions: current.sessions.map(session => (
+          session.id === sessionId ? { ...session, completed: !session.completed } : session
+        )),
+      };
+      if (SUPABASE_CONFIGURED) {
+        void upsertStudyPlan(id, nextPlan).catch(error => {
+          console.error("Could not save study-session progress:", error);
+        });
+      }
+      return nextPlan;
+    });
+  };
+
   // ── Spark button style ──
   const sparkButtonStyle = (): React.CSSProperties => {
     if (sparkAnim === "activating")   return { animation: "sparkActivate 0.42s cubic-bezier(0.34,1.56,0.64,1) forwards" };
@@ -693,7 +874,8 @@ export function CoursePage() {
       case "grades":      return <GradesTab assignments={assignments} courseColor={courseColor} insights={syllabusInsights}/>;
       case "docs":        return <DocsTab docs={docs} onDocsChange={setDocs} courseId={cid} onFileUpload={handleFileUpload} onRescanSyllabus={handleRescanSyllabus}/>;
       case "reminders":   return <RemindersTab courseCode={courseCode} courseId={cid} assignments={assignments} reminders={reminders} setReminders={setReminders}/>;
-      case "activities":  return <ActivitiesTab courseCode={courseCode} courseId={cid} docs={docs} onFocusMode={() => setFocusMode(true)} documentsSyncing={documentTextSyncing}/>;
+      case "activities":  return <ActivitiesTab courseCode={courseCode} courseId={cid} docs={docs} onFocusMode={() => setFocusMode(true)} onQuizComplete={handleQuizComplete} documentsSyncing={documentTextSyncing}/>;
+      case "study-planner": return <StudyPlannerTab courseColor={courseColor} studyPlan={studyPlan} plannerBusy={plannerBusy} plannerError={plannerError} onRefreshStudyPlan={() => { void rebuildStudyPlan(); }} onExportStudyPlan={handleExportStudyPlan} onToggleStudySession={handleToggleStudySession}/>;
     }
   };
 
@@ -761,7 +943,7 @@ export function CoursePage() {
       {/* ══ BODY ══ */}
       <div style={{ display: "flex", flex: 1, overflow: isMobile ? "visible" : "hidden", minHeight: 0 }}>
         <main style={{ flex: 1, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "20px 14px 160px" : "26px 30px 200px", minWidth: 0 }}>
-          <div style={{ maxWidth: "860px", margin: "0 auto" }}>{renderTab()}</div>
+          <div style={{ maxWidth: activeTab === "study-planner" ? "1480px" : "860px", margin: "0 auto", width: "100%" }}>{renderTab()}</div>
         </main>
 
         {chatOpen && chatMaximized && (
@@ -837,7 +1019,7 @@ export function CoursePage() {
       )}
 
       {/* ══ FOCUS MODE ══ */}
-      {focusMode && <FocusMode courseCode={courseCode} courseName={courseName} onExit={() => setFocusMode(false)}/>}
+      {focusMode && <FocusMode courseCode={courseCode} courseName={courseName} onExit={() => setFocusMode(false)} onSessionComplete={handleFocusSessionComplete}/>}
 
       <style>{`
         @keyframes sparkIdle {

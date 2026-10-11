@@ -18,7 +18,7 @@ export type SparkAICitation = {
 
 export type SparkAIOptions = {
   useSearch?: boolean;
-  task?: "course-chat" | "general-chat" | "quiz" | "course-suggestions" | "dashboard-suggestions" | "fact-check" | "syllabus-analysis" | "generic";
+  task?: "course-chat" | "general-chat" | "quiz" | "course-suggestions" | "dashboard-suggestions" | "study-planner" | "fact-check" | "syllabus-analysis" | "generic";
 };
 
 export type SparkAIResult = {
@@ -26,7 +26,8 @@ export type SparkAIResult = {
   citations: SparkAICitation[];
   grounded: boolean;
   model: string | null;
-  provider: "gemini" | "cerebras" | "groq" | null;
+  provider: "gemini" | "cerebras" | "groq" | "nvidia" | null;
+  searchProvider: "tinyfish" | "gemini" | "groq" | null;
 };
 
 type SparkAIInvokeResponse = {
@@ -40,6 +41,7 @@ type SparkAIInvokeResponse = {
   grounded?: boolean;
   model?: string;
   provider?: string;
+  searchProvider?: string;
 };
 
 type GeminiResponse = {
@@ -72,7 +74,7 @@ export const SPARK_BASE_URL          = (rawSparkBaseUrl || (rawSupabaseUrl ? `${
 export const GEMINI_DIRECT_AVAILABLE = Boolean(rawGeminiKey);
 const DIRECT_GEMINI_ALLOWED          = !SUPABASE_CONFIGURED && GEMINI_DIRECT_AVAILABLE;
 
-const GEMINI_DIRECT_MODEL = "gemini-2.5-flash-lite";
+const GEMINI_DIRECT_MODEL = "gemini-3.8-flash";
 
 // Max ms we'll sleep waiting for a Gemini quota cooldown before giving up.
 const MAX_QUOTA_WAIT_MS = 25_000;
@@ -187,8 +189,11 @@ async function invokeEdgeFunction(messages: SparkAIMessage[], options?: SparkAIO
     citations: normalizeCitations(payload?.citations),
     grounded: Boolean(payload?.grounded),
     model: typeof payload?.model === "string" ? payload.model : null,
-    provider: payload?.provider === "cerebras" || payload?.provider === "gemini" || payload?.provider === "groq"
+    provider: payload?.provider === "cerebras" || payload?.provider === "gemini" || payload?.provider === "groq" || payload?.provider === "nvidia"
       ? payload.provider
+      : null,
+    searchProvider: payload?.searchProvider === "tinyfish" || payload?.searchProvider === "gemini" || payload?.searchProvider === "groq"
+      ? payload.searchProvider
       : null,
   };
 }
@@ -262,6 +267,7 @@ async function callGeminiDirectOnce(
     grounded: Boolean(payload?.candidates?.[0]?.groundingMetadata),
     model,
     provider: "gemini",
+    searchProvider: options?.useSearch ? "gemini" : null,
   };
 }
 

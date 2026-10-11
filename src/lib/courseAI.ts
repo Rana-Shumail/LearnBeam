@@ -1,4 +1,5 @@
 import { compressDocumentText } from "./courseData";
+import type { StoredStudyTopic } from "./courseData";
 import { chatWithSparkAI } from "./sparkAI";
 
 export type GeneratedQuizQuestion = {
@@ -49,6 +50,14 @@ type DashboardSuggestionInput = {
   nextDue?: string | null;
   assignments?: Array<{ label: string; due: string; status: string }>;
   documents: QuizDocInput[];
+};
+
+type StudyPlannerInsightInput = {
+  courseCode: string;
+  courseName?: string | null;
+  assignments: Array<{ label: string; status: string; grade: number | null }>;
+  documents: QuizDocInput[];
+  quizAttempts: Array<{ topic: string; correct: number; total: number }>;
 };
 
 function extractJsonPayload(response: string) {
@@ -108,6 +117,78 @@ function normalizeSuggestions(
   return normalized
     .sort((left, right) => left.order - right.order)
     .map(({ order: _order, ...suggestion }) => suggestion);
+}
+
+function normalizeStudyTopics(payload: unknown, allowedSources: Set<string>): StoredStudyTopic[] {
+  const topics = Array.isArray((payload as { topics?: unknown })?.topics)
+    ? (payload as { topics: unknown[] }).topics
+    : [];
+  const seen = new Set<string>();
+
+  return topics.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.label !== "string" || typeof record.sourceLabel !== "string") return [];
+    const label = record.label.replace(/\s+/g, " ").trim();
+    const sourceLabel = record.sourceLabel.trim();
+    const status = record.status === "covered" || record.status === "uncovered" || record.status === "priority"
+      ? record.status
+      : null;
+    const key = label.toLowerCase();
+    if (!label || !status || !allowedSources.has(sourceLabel) || seen.has(key)) return [];
+    seen.add(key);
+    return [{ label, status, sourceLabel }] as StoredStudyTopic[];
+  }).slice(0, 12);
+}
+
+export async function generateStudyPlannerTopics(input: StudyPlannerInsightInput): Promise<StoredStudyTopic[]> {
+  const readableDocs = input.documents
+    .filter(document => document.textContent.trim().length >= 80)
+    .slice(0, 4);
+  if (readableDocs.length === 0) return [];
+
+  const allowedSources = new Set([
+    ...readableDocs.map(document => document.name),
+    ...input.assignments.map(assignment => assignment.label),
+    ...input.quizAttempts.map(attempt => `Quiz: ${attempt.topic}`),
+  ]);
+  const assignmentContext = input.assignments.slice(0, 10).map(assignment => (
+    `${assignment.label} | status=${assignment.status} | grade=${assignment.grade ?? "not graded"}`
+  )).join("\n");
+  const quizContext = input.quizAttempts.slice(-8).map(attempt => (
+    `Quiz: ${attempt.topic} | score=${attempt.correct}/${attempt.total}`
+  )).join("\n");
+
+  const response = await chatWithSparkAI([
+    {
+      role: "system",
+      content: [
+        "You identify study topics for LearnBeam's Smart Study Planner.",
+        "Use only explicit terminology found in the supplied course documents, assignment labels, and quiz results.",
+        "Never invent a topic, definition, deadline, or completion status.",
+        "Mark a topic covered only when a related assignment is completed/graded or its quiz score is at least 80 percent.",
+        "Mark a topic priority when its related quiz is below 80 percent or an upcoming assignment clearly targets it.",
+        "Otherwise mark it uncovered.",
+        "sourceLabel must exactly match one supplied document filename, assignment label, or Quiz: topic label.",
+        "Return JSON only in this shape: {\"topics\":[{\"label\":string,\"status\":\"covered\"|\"uncovered\"|\"priority\",\"sourceLabel\":string}]}",
+        "Return at most 12 concise topics.",
+      ].join(" "),
+    },
+    {
+      role: "user",
+      content: [
+        `Course: ${input.courseCode}${input.courseName ? ` — ${input.courseName}` : ""}`,
+        assignmentContext ? `Assignments:\n${assignmentContext}` : null,
+        quizContext ? `Quiz results:\n${quizContext}` : null,
+        "Course document excerpts:",
+        buildDocumentContext(readableDocs, 3500),
+      ].filter(Boolean).join("\n\n"),
+    },
+  ], { task: "study-planner" });
+
+  const topics = normalizeStudyTopics(JSON.parse(extractJsonPayload(response)), allowedSources);
+  if (topics.length === 0) throw new Error("Spark did not return source-grounded planner topics.");
+  return topics;
 }
 
 function normalizeQuizQuestions(payload: unknown): GeneratedQuizQuestion[] {

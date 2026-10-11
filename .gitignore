@@ -18,6 +18,8 @@ pnpm-debug.log*
 # env files
 .env
 .env.*
+!.env.example
+!supabase/functions/.env.example
 
 # OS files
 .DS_Store
