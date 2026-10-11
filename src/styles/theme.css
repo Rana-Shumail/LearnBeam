@@ -304,17 +304,8 @@ textarea:focus-visible,
   isolation: isolate;
 }
 
-.course-tile::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(115deg, var(--surface-highlight) 0%, transparent 34%, transparent 72%, rgba(255,255,255,0.08) 100%);
-}
-
 .course-tile:hover {
-  box-shadow: var(--shadow-lift) !important;
+  box-shadow: 0 12px 28px rgba(24,42,20,0.12) !important;
 }
 
 .course-menu-trigger,

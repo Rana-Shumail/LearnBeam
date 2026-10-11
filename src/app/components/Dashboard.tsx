@@ -49,20 +49,20 @@ export type Course = {
 const COURSE_COLORS = ["#66B539","#3b82f6","#f59e0b","#8b5cf6","#ef4444","#06b6d4"];
 
 const COURSE_TILE_STYLES: Record<string, {
-  start: string;
-  end: string;
+  background: string;
+  accent: string;
   text: string;
   muted: string;
   soft: string;
   track: string;
   border: string;
 }> = {
-  "#66B539": { start:"#79c94b", end:"#438d25", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(22,68,12,0.28)", border:"rgba(255,255,255,0.28)" },
-  "#3b82f6": { start:"#5b9af8", end:"#2864d6", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(13,51,120,0.28)", border:"rgba(255,255,255,0.28)" },
-  "#f59e0b": { start:"#ffc53d", end:"#e28a00", text:"#291b05", muted:"rgba(41,27,5,0.68)", soft:"rgba(255,255,255,0.30)", track:"rgba(90,52,0,0.22)", border:"rgba(255,255,255,0.38)" },
-  "#8b5cf6": { start:"#a47bfa", end:"#7140da", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(54,23,117,0.28)", border:"rgba(255,255,255,0.28)" },
-  "#ef4444": { start:"#f56565", end:"#ce3030", text:"#ffffff", muted:"rgba(255,255,255,0.78)", soft:"rgba(255,255,255,0.18)", track:"rgba(115,18,18,0.28)", border:"rgba(255,255,255,0.28)" },
-  "#06b6d4": { start:"#27c8df", end:"#078da8", text:"#ffffff", muted:"rgba(255,255,255,0.80)", soft:"rgba(255,255,255,0.20)", track:"rgba(5,74,88,0.26)", border:"rgba(255,255,255,0.30)" },
+  "#66B539": { background:"#e6f4dd", accent:"#4d942c", text:"#18320d", muted:"#5e7353", soft:"rgba(255,255,255,0.58)", track:"rgba(77,148,44,0.18)", border:"#c9e2ba" },
+  "#3b82f6": { background:"#e5efff", accent:"#2d70dc", text:"#142d52", muted:"#60718d", soft:"rgba(255,255,255,0.58)", track:"rgba(45,112,220,0.17)", border:"#c8daf8" },
+  "#f59e0b": { background:"#fff0cb", accent:"#c57b00", text:"#3b2a0c", muted:"#7d6c4d", soft:"rgba(255,255,255,0.58)", track:"rgba(197,123,0,0.17)", border:"#f0d795" },
+  "#8b5cf6": { background:"#eee7ff", accent:"#7448d7", text:"#302052", muted:"#75698d", soft:"rgba(255,255,255,0.58)", track:"rgba(116,72,215,0.16)", border:"#d9caf9" },
+  "#ef4444": { background:"#ffe7e4", accent:"#d73d3d", text:"#4e1d1d", muted:"#8a6865", soft:"rgba(255,255,255,0.58)", track:"rgba(215,61,61,0.15)", border:"#f2cac5" },
+  "#06b6d4": { background:"#dff5f7", accent:"#078da8", text:"#123a42", muted:"#5c7b80", soft:"rgba(255,255,255,0.58)", track:"rgba(7,141,168,0.16)", border:"#bde4e9" },
 };
 
 function normalizeCourseColor(value: string) {
@@ -1247,14 +1247,14 @@ export function Dashboard() {
                   onClick={()=>navigate(`/course/${c.id}`)}
                   className="course-tile"
                   style={{
-                    background:`linear-gradient(120deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.04) 34%, transparent 62%), linear-gradient(145deg, ${tileStyle.start} 0%, ${tileStyle.end} 100%)`,
+                    background:tileStyle.background,
                     border:`1px solid ${tileStyle.border}`,
                     borderRadius:"16px", padding:isMobile ? "18px" : "22px", cursor:"pointer",
                     transition:"box-shadow 0.2s, transform 0.18s", position:"relative", overflow:"visible",
-                    boxShadow:`0 10px 26px ${c.color}30, inset 0 1px 0 rgba(255,255,255,0.30)`,
+                    boxShadow:"0 7px 18px rgba(24,42,20,0.07)",
                   }}
-                  onMouseEnter={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow=`0 18px 42px ${c.color}45, inset 0 1px 0 rgba(255,255,255,0.34)`;el.style.transform="translateY(-3px)";}}
-                  onMouseLeave={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow=`0 10px 26px ${c.color}30, inset 0 1px 0 rgba(255,255,255,0.30)`;el.style.transform="translateY(0)";}}
+                  onMouseEnter={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="0 12px 28px rgba(24,42,20,0.12)";el.style.transform="translateY(-3px)";}}
+                  onMouseLeave={e=>{const el=e.currentTarget as HTMLDivElement;el.style.boxShadow="0 7px 18px rgba(24,42,20,0.07)";el.style.transform="translateY(0)";}}
                 >
                   <div
                     ref={courseMenuId === c.id ? courseMenuRef : undefined}
@@ -1300,7 +1300,7 @@ export function Dashboard() {
                   </div>
                   <div style={{display:"flex", alignItems:"center", gap:"12px", marginBottom:"18px"}}>
                     <div style={{width:"44px", height:"44px", borderRadius:"12px", background:tileStyle.soft, border:`1px solid ${tileStyle.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
-                      <GraduationCap size={20} style={{color:tileStyle.text}}/>
+                      <GraduationCap size={20} style={{color:tileStyle.accent}}/>
                     </div>
                     <div style={{minWidth:0}}>
                       <div style={{fontFamily:F.heading, fontSize:"1rem", fontWeight:800, color:tileStyle.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{c.code}</div>
@@ -1308,11 +1308,11 @@ export function Dashboard() {
                     </div>
                   </div>
                   <div style={{height:"4px", borderRadius:"99px", background:tileStyle.track, overflow:"hidden", marginBottom:"13px"}}>
-                    <div style={{height:"100%", width:`${c.progress}%`, background:tileStyle.text, borderRadius:"99px", transition:"width 0.4s ease"}}/>
+                    <div style={{height:"100%", width:`${c.progress}%`, background:tileStyle.accent, borderRadius:"99px", transition:"width 0.4s ease"}}/>
                   </div>
                   <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
                     <div>
-                      <div style={{fontFamily:F.heading, fontSize:"1.3rem", fontWeight:800, color:tileStyle.text, lineHeight:1}}>{c.grade}</div>
+                      <div style={{fontFamily:F.heading, fontSize:"1.3rem", fontWeight:800, color:tileStyle.accent, lineHeight:1}}>{c.grade}</div>
                       <div style={{fontFamily:F.body, fontSize:"0.68rem", color:tileStyle.muted, marginTop:"1px"}}>Grade</div>
                     </div>
                     <div style={{textAlign:"right"}}>
